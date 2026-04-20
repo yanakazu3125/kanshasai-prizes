@@ -8,11 +8,14 @@ const bcrypt = require("bcrypt");
 const multer = require("multer");
 const { parse } = require("csv-parse");
 const XLSX = require("xlsx");
+const mongoose = require("mongoose");
 
 const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
 const SESSION_SECRET = process.env.SESSION_SECRET || "change-me";
+const MONGODB_URI = process.env.MONGODB_URI || "";
+const USE_MONGO = Boolean(MONGODB_URI);
 
 const DATA_DIR = path.join(__dirname, "data");
 const UPLOADS_DIR = path.join(__dirname, "uploads");
@@ -46,15 +49,79 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function seedAdminIfNeeded() {
-  const users = readJson(USERS_JSON, []);
-  if (users.some((u) => u.role === "admin")) return;
+let PrizeModel = null;
+let UserModel = null;
 
+function defineModels() {
+  if (PrizeModel && UserModel) return;
+
+  const prizeSchema = new mongoose.Schema(
+    {
+      id: { type: String, required: true, unique: true, index: true },
+      title: { type: String, required: true },
+      description: { type: String, default: "" },
+      category: { type: String, default: "" },
+      setName: { type: String, default: "" },
+      tags: { type: [String], default: [] },
+      priceYen: { type: Number, default: 0 },
+      quantity: { type: Number, default: 0 },
+      imagePath: { type: String, default: "" },
+      detailImagePath: { type: String, default: "" },
+      createdAt: { type: String, default: "" },
+      updatedAt: { type: String, default: "" },
+    },
+    { versionKey: false }
+  );
+
+  const userSchema = new mongoose.Schema(
+    {
+      id: { type: String, required: true, unique: true, index: true },
+      role: { type: String, required: true, index: true },
+      username: { type: String, default: "", index: true },
+      email: { type: String, default: "", index: true },
+      passwordHash: { type: String, required: true },
+      createdAt: { type: String, default: "" },
+    },
+    { versionKey: false }
+  );
+
+  PrizeModel = mongoose.models.Prize || mongoose.model("Prize", prizeSchema);
+  UserModel = mongoose.models.User || mongoose.model("User", userSchema);
+}
+
+async function initDbIfNeeded() {
+  if (!USE_MONGO) return;
+  if (mongoose.connection.readyState === 1) return;
+  await mongoose.connect(MONGODB_URI);
+  defineModels();
+  console.log("✅ MongoDBに接続しました");
+}
+
+async function seedAdminIfNeeded() {
   const username = process.env.ADMIN_ID || "admin";
   const email = process.env.ADMIN_EMAIL || "admin@example.com";
   const password = process.env.ADMIN_PASSWORD || "admin1234";
-  const passwordHash = bcrypt.hashSync(password, 10);
 
+  if (USE_MONGO) {
+    defineModels();
+    const exists = await UserModel.findOne({ role: "admin" }).lean();
+    if (exists) return;
+    const passwordHash = bcrypt.hashSync(password, 10);
+    await UserModel.create({
+      id: cryptoRandomId(),
+      role: "admin",
+      username,
+      email,
+      passwordHash,
+      createdAt: nowIso(),
+    });
+    console.log(`[seed] admin created: ${username}`);
+    return;
+  }
+
+  const users = readJson(USERS_JSON, []);
+  if (users.some((u) => u.role === "admin")) return;
+  const passwordHash = bcrypt.hashSync(password, 10);
   users.push({
     id: cryptoRandomId(),
     role: "admin",
@@ -67,13 +134,23 @@ function seedAdminIfNeeded() {
   console.log(`[seed] admin created: ${username}`);
 }
 
-function ensureAdminUsername() {
+async function ensureAdminUsername() {
+  const username = process.env.ADMIN_ID || "admin";
+  if (USE_MONGO) {
+    defineModels();
+    const admin = await UserModel.findOne({ role: "admin" });
+    if (!admin) return;
+    if (admin.username && String(admin.username).trim()) return;
+    admin.username = username;
+    await admin.save();
+    console.log(`[migrate] admin username set: ${username}`);
+    return;
+  }
+
   const users = readJson(USERS_JSON, []);
   const admin = users.find((u) => u.role === "admin");
   if (!admin) return;
   if (admin.username && String(admin.username).trim()) return;
-
-  const username = process.env.ADMIN_ID || "admin";
   admin.username = username;
   writeJsonAtomic(USERS_JSON, users);
   console.log(`[migrate] admin username set: ${username}`);
@@ -135,12 +212,69 @@ const upload = multer({
 });
 
 function listPrizes() {
+  if (USE_MONGO) {
+    // This function becomes async via listPrizesAsync; keep for backward safety.
+    return [];
+  }
   const prizes = readJson(PRIZES_JSON, []);
   return Array.isArray(prizes) ? prizes : [];
 }
 
 function savePrizes(prizes) {
+  if (USE_MONGO) return;
   writeJsonAtomic(PRIZES_JSON, prizes);
+}
+
+async function listPrizesAsync() {
+  if (USE_MONGO) {
+    defineModels();
+    const docs = await PrizeModel.find({}).lean();
+    return docs || [];
+  }
+  return listPrizes();
+}
+
+async function findPrizeById(id) {
+  if (USE_MONGO) {
+    defineModels();
+    return await PrizeModel.findOne({ id }).lean();
+  }
+  const prizes = listPrizes();
+  return prizes.find((p) => p.id === id) || null;
+}
+
+async function insertPrize(prize) {
+  if (USE_MONGO) {
+    defineModels();
+    await PrizeModel.create(prize);
+    return;
+  }
+  const prizes = listPrizes();
+  prizes.push(prize);
+  savePrizes(prizes);
+}
+
+async function updatePrizeById(id, patch) {
+  if (USE_MONGO) {
+    defineModels();
+    await PrizeModel.updateOne({ id }, { $set: patch });
+    return;
+  }
+  const prizes = listPrizes();
+  const idx = prizes.findIndex((p) => p.id === id);
+  if (idx < 0) return;
+  prizes[idx] = { ...prizes[idx], ...patch };
+  savePrizes(prizes);
+}
+
+async function deletePrizeById(id) {
+  if (USE_MONGO) {
+    defineModels();
+    await PrizeModel.deleteOne({ id });
+    return;
+  }
+  const prizes = listPrizes();
+  savePrizes(prizes.filter((p) => p.id !== id));
 }
 
 function parseNumberLoose(v) {
@@ -311,6 +445,7 @@ function parseLegacyBlockAoA(aoa) {
 }
 
 function findUserByIdentifier(identifier) {
+  if (USE_MONGO) return null; // use async version
   const users = readJson(USERS_JSON, []);
   const key = String(identifier || "").toLowerCase();
   return users.find((u) => {
@@ -320,16 +455,27 @@ function findUserByIdentifier(identifier) {
   });
 }
 
+async function findUserByIdentifierAsync(identifier) {
+  const key = String(identifier || "").toLowerCase();
+  if (USE_MONGO) {
+    defineModels();
+    return await UserModel.findOne({
+      $or: [{ username: key }, { email: key }],
+    }).lean();
+  }
+  return findUserByIdentifier(identifier);
+}
+
 // ---- Public ----
 app.get("/", (req, res) => res.redirect("/prizes"));
 
-app.get("/prizes", (req, res) => {
+app.get("/prizes", async (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
   const quantityStr = String(req.query.quantity || "").trim();
   const quantity = quantityStr ? Number(quantityStr) : null;
   const priceRange = String(req.query.priceRange || "").trim();
 
-  const prizes = listPrizes();
+  const prizes = await listPrizesAsync();
   const filtered = prizes.filter((p) => {
     const matchesQ =
       !q ||
@@ -369,9 +515,8 @@ app.get("/prizes", (req, res) => {
   res.render("public_index", { prizes: filtered, q, quantityStr, priceRange });
 });
 
-app.get("/prizes/:id", (req, res) => {
-  const prizes = listPrizes();
-  const prize = prizes.find((p) => p.id === req.params.id);
+app.get("/prizes/:id", async (req, res) => {
+  const prize = await findPrizeById(req.params.id);
   if (!prize) return res.status(404).send("Not found");
   res.render("public_detail", { prize });
 });
@@ -385,7 +530,7 @@ app.get("/admin/login", (req, res) => {
 
 app.post("/admin/login", async (req, res) => {
   const { username, password } = req.body || {};
-  const user = findUserByIdentifier(username || "");
+  const user = await findUserByIdentifierAsync(username || "");
   if (!user) return res.status(401).render("admin_login", { error: "ログイン情報が違います" });
 
   const ok = await bcrypt.compare(String(password || ""), user.passwordHash);
@@ -400,9 +545,9 @@ app.post("/admin/logout", (req, res) => {
 });
 
 // ---- Admin prizes ----
-app.get("/admin/prizes", requireAdmin, (req, res) => {
+app.get("/admin/prizes", requireAdmin, async (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
-  const prizes = listPrizes();
+  const prizes = await listPrizesAsync();
   const filtered = !q
     ? prizes
     : prizes.filter(
@@ -421,7 +566,7 @@ app.get("/admin/quick-add", requireAdmin, (req, res) => {
   res.render("admin_quick_add", { error: null, form: {}, user: req.session.user });
 });
 
-app.post("/admin/quick-add", requireAdmin, upload.single("image"), (req, res) => {
+app.post("/admin/quick-add", requireAdmin, upload.single("image"), async (req, res) => {
   try {
     const { title, priceYen } = req.body || {};
     if (!title) {
@@ -432,8 +577,7 @@ app.post("/admin/quick-add", requireAdmin, upload.single("image"), (req, res) =>
       });
     }
 
-    const prizes = listPrizes();
-    prizes.push({
+    await insertPrize({
       id: cryptoRandomId(),
       title: String(title).trim(),
       description: "",
@@ -446,14 +590,13 @@ app.post("/admin/quick-add", requireAdmin, upload.single("image"), (req, res) =>
       createdAt: nowIso(),
       updatedAt: nowIso(),
     });
-    savePrizes(prizes);
     res.redirect("/admin/prizes");
   } catch (e) {
     res.status(500).send(String(e));
   }
 });
 
-app.post("/admin/prizes/new", requireAdmin, upload.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), (req, res) => {
+app.post("/admin/prizes/new", requireAdmin, upload.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), async (req, res) => {
   try {
     const { title, description, category, tags, setName, priceYen, quantity } = req.body || {};
     if (!title) {
@@ -465,7 +608,6 @@ app.post("/admin/prizes/new", requireAdmin, upload.fields([{ name: "image", maxC
       });
     }
 
-    const prizes = listPrizes();
     const mainFile = req.files?.image?.[0] || null;
     const detailFile = req.files?.detailImage?.[0] || null;
     const prize = {
@@ -485,27 +627,23 @@ app.post("/admin/prizes/new", requireAdmin, upload.fields([{ name: "image", maxC
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
-    prizes.push(prize);
-    savePrizes(prizes);
+    await insertPrize(prize);
     res.redirect("/admin/prizes");
   } catch (e) {
     res.status(500).send(String(e));
   }
 });
 
-app.get("/admin/prizes/:id/edit", requireAdmin, (req, res) => {
-  const prizes = listPrizes();
-  const prize = prizes.find((p) => p.id === req.params.id);
+app.get("/admin/prizes/:id/edit", requireAdmin, async (req, res) => {
+  const prize = await findPrizeById(req.params.id);
   if (!prize) return res.status(404).send("Not found");
   res.render("admin_prize_form", { mode: "edit", prize, error: null, user: req.session.user });
 });
 
-app.post("/admin/prizes/:id/edit", requireAdmin, upload.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), (req, res) => {
-  const prizes = listPrizes();
-  const idx = prizes.findIndex((p) => p.id === req.params.id);
-  if (idx < 0) return res.status(404).send("Not found");
+app.post("/admin/prizes/:id/edit", requireAdmin, upload.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), async (req, res) => {
+  const current = await findPrizeById(req.params.id);
+  if (!current) return res.status(404).send("Not found");
 
-  const current = prizes[idx];
   const { title, description, category, tags, setName, priceYen, quantity } = req.body || {};
   const mainFile = req.files?.image?.[0] || null;
   const detailFile = req.files?.detailImage?.[0] || null;
@@ -520,8 +658,7 @@ app.post("/admin/prizes/:id/edit", requireAdmin, upload.fields([{ name: "image",
     });
   }
 
-  prizes[idx] = {
-    ...current,
+  await updatePrizeById(req.params.id, {
     title: String(title).trim(),
     description: String(description || "").trim(),
     category: String(category || "").trim(),
@@ -535,16 +672,12 @@ app.post("/admin/prizes/:id/edit", requireAdmin, upload.fields([{ name: "image",
     imagePath: mainFile ? `/uploads/${mainFile.filename}` : current.imagePath,
     detailImagePath: detailFile ? `/uploads/${detailFile.filename}` : (removeDetailImage ? "" : (current.detailImagePath || "")),
     updatedAt: nowIso(),
-  };
-
-  savePrizes(prizes);
+  });
   res.redirect("/admin/prizes");
 });
 
-app.post("/admin/prizes/:id/delete", requireAdmin, (req, res) => {
-  const prizes = listPrizes();
-  const next = prizes.filter((p) => p.id !== req.params.id);
-  savePrizes(next);
+app.post("/admin/prizes/:id/delete", requireAdmin, async (req, res) => {
+  await deletePrizeById(req.params.id);
   res.redirect("/admin/prizes");
 });
 
@@ -612,7 +745,6 @@ app.post("/admin/import", requireAdmin, upload.single("csv"), async (req, res) =
       });
     }
 
-    const prizes = listPrizes();
     const toAdd = rows.map((r) => ({
       id: cryptoRandomId(),
       title: String(r.title || r.name || "").trim(),
@@ -630,7 +762,18 @@ app.post("/admin/import", requireAdmin, upload.single("csv"), async (req, res) =
       updatedAt: nowIso(),
     })).filter((p) => p.title);
 
-    savePrizes([...prizes, ...toAdd]);
+    if (USE_MONGO) {
+      defineModels();
+      try {
+        await PrizeModel.insertMany(toAdd, { ordered: false });
+      } catch (e) {
+        // Ignore duplicate key errors etc. (best-effort import)
+        console.warn("[import] insertMany warning:", e?.message || e);
+      }
+    } else {
+      const prizes = listPrizes();
+      savePrizes([...prizes, ...toAdd]);
+    }
     res.redirect("/admin/prizes");
   } catch (e) {
     res.status(500).render("admin_import", { error: `CSV取り込みに失敗しました: ${e}`, user: req.session.user });
@@ -640,13 +783,27 @@ app.post("/admin/import", requireAdmin, upload.single("csv"), async (req, res) =
   }
 });
 
-ensureDirs();
-seedAdminIfNeeded();
-ensureAdminUsername();
+async function bootstrap() {
+  ensureDirs();
+  if (USE_MONGO) {
+    try {
+      await initDbIfNeeded();
+    } catch (e) {
+      console.error("❌ MongoDB接続に失敗しました:", e);
+      process.exit(1);
+    }
+  }
+  await seedAdminIfNeeded();
+  await ensureAdminUsername();
 
-app.listen(PORT, () => {
-  console.log(`prizes app listening on http://localhost:${PORT}`);
-  console.log(`public: http://localhost:${PORT}/prizes`);
-  console.log(`admin:  http://localhost:${PORT}/admin/login`);
-});
+  app.listen(PORT, () => {
+    console.log(`prizes app listening on http://localhost:${PORT}`);
+    console.log(`public: http://localhost:${PORT}/prizes`);
+    console.log(`admin:  http://localhost:${PORT}/admin/login`);
+    if (USE_MONGO) console.log("storage: MongoDB");
+    else console.log("storage: JSON files (local)");
+  });
+}
+
+bootstrap();
 
