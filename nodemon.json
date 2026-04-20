@@ -1,0 +1,6 @@
+{
+  "watch": ["server.js", "views", "static", "image"],
+  "ext": "js,ejs,css",
+  "ignore": ["data/*.json", "uploads/*", "node_modules/*"]
+}
+

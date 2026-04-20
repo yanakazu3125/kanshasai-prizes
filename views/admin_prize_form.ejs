@@ -1,0 +1,89 @@
+<%
+  const isEdit = mode === "edit";
+  const pageTitle = isEdit ? "管理 - 景品編集" : "管理 - 景品追加";
+  const err = error ? `<div class="error">${error}</div>` : "";
+  const p = prize || {};
+
+  function esc(v) {
+    return String(v || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+  }
+
+  const body = `
+    <div class="panel">
+      <div class="actions">
+        <a class="btn secondary" href="/admin/prizes">← 戻る</a>
+        <form method="post" action="/admin/logout">
+          <button class="btn secondary" type="submit">ログアウト</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="panel" style="max-width:760px;margin-left:auto;margin-right:auto;">
+      <div class="title" style="font-size:20px;margin-bottom:10px;">${isEdit ? "景品を編集" : "景品を追加"}</div>
+      <form method="post" enctype="multipart/form-data" action="${isEdit ? `/admin/prizes/${p.id}/edit` : "/admin/prizes/new"}">
+        <div class="field">
+          <label>タイトル（必須）</label>
+          <input name="title" value="${esc(p.title)}" required />
+        </div>
+        <div style="height:10px"></div>
+        <div class="field">
+          <label>説明</label>
+          <textarea name="description">${esc(p.description)}</textarea>
+        </div>
+        <div style="height:10px"></div>
+        <div class="grid" style="grid-template-columns: repeat(2, 1fr);">
+          <div class="field">
+            <label>値段（円）</label>
+            <input name="priceYen" inputmode="numeric" value="${esc(p.priceYen ?? '')}" placeholder="例: 20000" />
+          </div>
+          <div class="field">
+            <label>点数（個）</label>
+            <input name="quantity" inputmode="numeric" value="${esc(p.quantity ?? '')}" placeholder="例: 3" />
+          </div>
+        </div>
+        <div style="height:10px"></div>
+        <div class="grid" style="grid-template-columns: repeat(2, 1fr);">
+          <div class="field">
+            <label>カテゴリ</label>
+            <input name="category" value="${esc(p.category)}" placeholder="例: 食品" />
+          </div>
+          <div class="field">
+            <label>セット名</label>
+            <input name="setName" value="${esc(p.setName)}" placeholder="例: Aセット" />
+          </div>
+        </div>
+        <div style="height:10px"></div>
+        <div class="field">
+          <label>タグ（カンマ区切り）</label>
+          <input name="tags" value="${esc(Array.isArray(p.tags) ? p.tags.join(', ') : '')}" placeholder="例: コーヒー, お菓子" />
+        </div>
+        <div style="height:10px"></div>
+        <div class="field">
+          <label>画像（任意 / 上書き）</label>
+          <input type="file" name="image" accept="image/*" />
+          ${p.imagePath ? `<div class="meta">現在: <a href="${p.imagePath}" target="_blank" rel="noreferrer">${p.imagePath}</a></div>` : ""}
+        </div>
+        <div style="height:10px"></div>
+        <div class="field">
+          <label>詳細用の画像（任意 / 説明の下に表示）</label>
+          <input type="file" name="detailImage" accept="image/*" />
+          ${p.detailImagePath ? `<div class="meta">現在: <a href="${p.detailImagePath}" target="_blank" rel="noreferrer">${p.detailImagePath}</a></div>` : ""}
+        </div>
+        ${isEdit && p.detailImagePath ? `
+          <div style="height:10px"></div>
+          <label style="display:flex; gap:10px; align-items:center; color: var(--muted); font-size: 13px;">
+            <input type="checkbox" name="removeDetailImage" value="1" />
+            詳細用の画像を削除する（更新で反映）
+          </label>
+        ` : ""}
+        ${err}
+        <div style="height:14px"></div>
+        <div class="actions">
+          <button class="btn" type="submit">${isEdit ? "更新" : "登録"}</button>
+        </div>
+      </form>
+    </div>
+  `;
+%>
+<%- include("_layout", { title: pageTitle, body }) %>
+

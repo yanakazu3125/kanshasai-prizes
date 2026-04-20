@@ -1,0 +1,39 @@
+<%
+  const pageTitle = `${prize.title} - 景品詳細`;
+  const imgSrc = prize.imagePath || "";
+  const img =
+    imgSrc
+      ? `<img src="${imgSrc}" alt="" onerror="this.onerror=null;this.src='/static/placeholder.svg';" style="width:100%;max-height:420px;object-fit:cover;border-radius:16px;border:1px solid rgba(255,255,255,0.12)" />`
+      : `<div class="placeholder" style="height:320px;border-radius:16px;border:1px solid rgba(255,255,255,0.12);">NO IMAGE</div>`;
+  const tags = (prize.tags || []).map((t) => `<span class="tag">${t}</span>`).join("");
+  const price = prize.priceYen ? `¥${Number(prize.priceYen).toLocaleString('ja-JP')}` : "";
+  const qty = prize.quantity ? `${prize.quantity}点` : "";
+  const detailImgSrc = prize.detailImagePath || "";
+  const detailImg = detailImgSrc
+    ? `<div style="height:12px"></div><img src="${detailImgSrc}" alt="" onerror="this.onerror=null;this.style.display='none';" style="width:100%;max-height:520px;object-fit:contain;border-radius:16px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.18)" />`
+    : "";
+  const meta = [
+    prize.category ? `カテゴリ: ${prize.category}` : null,
+    prize.setName ? `セット: ${prize.setName}` : null,
+    qty ? qty : null,
+    price ? price : null,
+  ].filter(Boolean).join(" / ");
+  const body = `
+    <div class="panel">
+      <div class="actions">
+        <a class="btn secondary" href="/prizes">← 一覧へ</a>
+      </div>
+      <div style="height:12px"></div>
+      ${img}
+      <div style="height:14px"></div>
+      <div class="title" style="font-size:22px;">${prize.title}</div>
+      <div class="meta">${meta || ""}</div>
+      <div style="height:10px"></div>
+      <div>${tags}</div>
+      <div class="desc">${String(prize.description || "").replaceAll("\n", "<br/>")}</div>
+      ${detailImg}
+    </div>
+  `;
+%>
+<%- include("_layout", { title: pageTitle, body }) %>
+

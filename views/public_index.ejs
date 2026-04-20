@@ -1,0 +1,75 @@
+<%
+  const pageTitle = "景品一覧";
+  const body = `
+    <div class="panel">
+      <form class="row" method="get" action="/prizes">
+        <div style="flex:1; min-width:220px;">
+          <div class="field">
+            <label>検索（タイトル/説明/タグ）</label>
+            <input name="q" value="${String(q || "").replaceAll('"', '&quot;')}" placeholder="例: コーヒー / お菓子 / Aセット" />
+          </div>
+        </div>
+        <div style="width:220px;">
+          <div class="field">
+            <label>セット数（点数）</label>
+            <input name="quantity" inputmode="numeric" value="${String(quantityStr || "").replaceAll('"', '&quot;')}" placeholder="例: 3" />
+          </div>
+        </div>
+        <div style="width:240px;">
+          <div class="field">
+            <label>金額帯</label>
+            <select name="priceRange">
+              <option value="" ${!priceRange ? "selected" : ""}>指定なし</option>
+              <option value="10000-30000" ${priceRange === "10000-30000" ? "selected" : ""}>1万〜3万</option>
+              <option value="30000-50000" ${priceRange === "30000-50000" ? "selected" : ""}>3万〜5万</option>
+              <option value="50000-100000" ${priceRange === "50000-100000" ? "selected" : ""}>5万〜10万</option>
+              <option value="100000-" ${priceRange === "100000-" ? "selected" : ""}>10万以上</option>
+            </select>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn" type="submit">検索</button>
+          <a class="btn secondary" href="/prizes">リセット</a>
+        </div>
+      </form>
+    </div>
+
+    <div class="panel">
+      <div class="meta">件数: ${prizes.length}</div>
+      <div style="height:12px"></div>
+      <div class="grid">
+        ${prizes
+          .map((p) => {
+            const imgSrc = p.imagePath || "";
+            const img =
+              imgSrc
+                ? `<img src="${imgSrc}" alt="" onerror="this.onerror=null;this.src='/static/placeholder.svg';" />`
+                : `<div class="placeholder">NO IMAGE</div>`;
+            const tags = (p.tags || []).slice(0, 4).map((t) => `<span class="tag">${t}</span>`).join("");
+            const price = p.priceYen ? `¥${Number(p.priceYen).toLocaleString('ja-JP')}` : "";
+            const qty = p.quantity ? `${p.quantity}点` : "";
+            const summary = [qty, price].filter(Boolean).join(" / ");
+            const meta = [
+              p.category ? `カテゴリ: ${p.category}` : null,
+              p.setName ? `セット: ${p.setName}` : null,
+              summary ? summary : null,
+            ].filter(Boolean).join(" / ");
+            return `
+              <a class="card" href="/prizes/${p.id}" style="text-decoration:none;">
+                ${img}
+                <div class="body">
+                  <div class="title">${p.title}</div>
+                  <div class="meta">${meta || ""}</div>
+                  <div style="height:8px"></div>
+                  <div>${tags}</div>
+                </div>
+              </a>
+            `;
+          })
+          .join("")}
+      </div>
+    </div>
+  `;
+%>
+<%- include("_layout", { title: pageTitle, body, bodyClass: "public-list" }) %>
+

@@ -1,0 +1,48 @@
+<%
+  const pageTitle = "管理 - 簡単追加";
+  const err = error ? `<div class="error">${error}</div>` : "";
+
+  function esc(v) {
+    return String(v || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+  }
+
+  const body = `
+    <div class="panel">
+      <div class="actions">
+        <a class="btn secondary" href="/admin/prizes">← 戻る</a>
+        <form method="post" action="/admin/logout">
+          <button class="btn secondary" type="submit">ログアウト</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="panel" style="max-width:760px;margin-left:auto;margin-right:auto;">
+      <div class="title" style="font-size:20px;margin-bottom:10px;">画像・名前・金額だけで追加</div>
+      <form method="post" enctype="multipart/form-data" action="/admin/quick-add">
+        <div class="field">
+          <label>名前（必須）</label>
+          <input name="title" value="${esc(form?.title)}" required />
+        </div>
+        <div style="height:10px"></div>
+        <div class="field">
+          <label>金額（円）</label>
+          <input name="priceYen" inputmode="numeric" value="${esc(form?.priceYen)}" placeholder="例: 20000" />
+        </div>
+        <div style="height:10px"></div>
+        <div class="field">
+          <label>画像（任意）</label>
+          <input type="file" name="image" accept="image/*" />
+        </div>
+        ${err}
+        <div style="height:14px"></div>
+        <div class="actions">
+          <button class="btn" type="submit">追加</button>
+        </div>
+        <div style="height:10px"></div>
+        <div class="meta">点数・説明・タグなどは、追加後に「編集」で入れられます。</div>
+      </form>
+    </div>
+  `;
+%>
+<%- include("_layout", { title: pageTitle, body }) %>
+

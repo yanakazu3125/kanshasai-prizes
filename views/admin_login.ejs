@@ -1,0 +1,30 @@
+<%
+  const pageTitle = "管理ログイン";
+  const err = error ? `<div class="error">${error}</div>` : "";
+  const body = `
+    <div class="panel" style="max-width:520px;margin-left:auto;margin-right:auto;">
+      <div class="title" style="font-size:20px;margin-bottom:10px;">管理者ログイン</div>
+      <form method="post" action="/admin/login">
+        <div class="field">
+          <label>ID</label>
+          <input name="username" autocomplete="username" required />
+        </div>
+        <div style="height:10px"></div>
+        <div class="field">
+          <label>パスワード</label>
+          <input name="password" type="password" autocomplete="current-password" required />
+        </div>
+        ${err}
+        <div style="height:14px"></div>
+        <div class="actions">
+          <button class="btn" type="submit">ログイン</button>
+          <a class="btn secondary" href="/prizes">公開ページへ</a>
+        </div>
+      </form>
+      <div style="height:12px"></div>
+      <div class="meta">初期管理者は <code>.env</code> の <code>ADMIN_ID</code>/<code>ADMIN_PASSWORD</code> で設定します。</div>
+    </div>
+  `;
+%>
+<%- include("_layout", { title: pageTitle, body }) %>
+

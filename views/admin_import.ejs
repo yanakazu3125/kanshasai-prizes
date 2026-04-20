@@ -1,0 +1,39 @@
+<%
+  const pageTitle = "管理 - CSV/Excel取込";
+  const err = error ? `<div class="error">${error}</div>` : "";
+  const body = `
+    <div class="panel">
+      <div class="actions">
+        <a class="btn secondary" href="/admin/prizes">← 戻る</a>
+        <form method="post" action="/admin/logout">
+          <button class="btn secondary" type="submit">ログアウト</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="panel" style="max-width:760px;margin-left:auto;margin-right:auto;">
+      <div class="title" style="font-size:20px;margin-bottom:10px;">CSV/Excel取込</div>
+      <div class="meta">
+        表形式（1行目ヘッダー）なら <code>title</code>, <code>description</code>, <code>category</code>, <code>setName</code>, <code>tags</code>, <code>priceYen</code>, <code>quantity</code> を推奨（最低 <code>title</code> が必要）。
+        <br />
+        また、ブロック形式（コード行→内訳行→合計行）のExcelも、初回取り込み用途として自動変換に対応しています。
+      </div>
+      <div style="height:12px"></div>
+      <form method="post" enctype="multipart/form-data" action="/admin/import">
+        <div class="field">
+          <label>ファイル（CSV または Excel）</label>
+          <input type="file" name="csv" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,application/vnd.ms-excel,.xlsm" required />
+        </div>
+        ${err}
+        <div style="height:14px"></div>
+        <div class="actions">
+          <button class="btn" type="submit">取り込み</button>
+        </div>
+      </form>
+      <div style="height:14px"></div>
+      <div class="meta">※画像はCSVでは取り込みません。取込後に編集画面から追加してください。</div>
+    </div>
+  `;
+%>
+<%- include("_layout", { title: pageTitle, body }) %>
+

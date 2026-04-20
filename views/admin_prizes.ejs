@@ -1,0 +1,74 @@
+<%
+  const pageTitle = "管理 - 景品";
+  const rows = prizes
+    .map((p) => {
+      const imgSrc = p.imagePath || "";
+      const img =
+        imgSrc
+          ? `<img src="${imgSrc}" alt="" onerror="this.onerror=null;this.src='/static/placeholder.svg';" style="width:70px;height:50px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,0.12)" />`
+          : `<div class="placeholder small">NO</div>`;
+      const tags = (p.tags || []).slice(0, 6).map((t) => `<span class="tag">${t}</span>`).join("");
+      const meta = [p.category ? `カテゴリ:${p.category}` : null, p.setName ? `セット:${p.setName}` : null].filter(Boolean).join(" / ");
+      return `
+        <tr>
+          <td>${img}</td>
+          <td>
+            <div style="font-weight:700;">${p.title}</div>
+            <div class="meta">${meta || ""}</div>
+            <div style="margin-top:6px;">${tags}</div>
+          </td>
+          <td style="white-space:nowrap;">
+            <div class="actions">
+              <a class="btn secondary" href="/prizes/${p.id}">表示</a>
+              <a class="btn" href="/admin/prizes/${p.id}/edit">編集</a>
+              <form method="post" action="/admin/prizes/${p.id}/delete" onsubmit="return confirm('削除しますか？');">
+                <button class="btn danger" type="submit">削除</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const body = `
+    <div class="panel">
+      <div class="actions" style="justify-content:space-between;">
+        <form class="row" method="get" action="/admin/prizes" style="flex:1;">
+          <div style="flex:1; min-width:240px;">
+            <input name="q" value="${String(q || "").replaceAll('"', '&quot;')}" placeholder="検索（タイトル/説明）" />
+          </div>
+          <button class="btn" type="submit">検索</button>
+          <a class="btn secondary" href="/admin/prizes">リセット</a>
+        </form>
+        <div class="actions">
+          <a class="btn" href="/admin/quick-add">+ 簡単追加</a>
+          <a class="btn secondary" href="/admin/prizes/new">詳細追加</a>
+          <a class="btn secondary" href="/admin/import">CSV取込</a>
+          <form method="post" action="/admin/logout">
+            <button class="btn secondary" type="submit">ログアウト</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="meta">ログイン中: ${user?.username || user?.email || ""} / 件数: ${prizes.length}</div>
+      <div style="height:12px"></div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:90px;">画像</th>
+            <th>内容</th>
+            <th style="width:280px;">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || `<tr><td colspan="3" class="meta">まだ登録がありません。</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+%>
+<%- include("_layout", { title: pageTitle, body }) %>
+

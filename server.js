@@ -1,0 +1,652 @@
+require("dotenv").config();
+
+const path = require("path");
+const fs = require("fs");
+const express = require("express");
+const session = require("express-session");
+const bcrypt = require("bcrypt");
+const multer = require("multer");
+const { parse } = require("csv-parse");
+const XLSX = require("xlsx");
+
+const app = express();
+
+const PORT = Number(process.env.PORT || 3001);
+const SESSION_SECRET = process.env.SESSION_SECRET || "change-me";
+
+const DATA_DIR = path.join(__dirname, "data");
+const UPLOADS_DIR = path.join(__dirname, "uploads");
+const IMAGE_DIR = path.join(__dirname, "image");
+const PRIZES_JSON = path.join(DATA_DIR, "prizes.json");
+const USERS_JSON = path.join(DATA_DIR, "users.json");
+// Default image shown for imported prizes (can override in .env)
+const DEFAULT_IMAGE_PATH = process.env.DEFAULT_IMAGE_PATH || "/image/IMG_0428.jpg";
+
+function ensureDirs() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+function readJson(filePath, fallback) {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonAtomic(filePath, data) {
+  const tmp = `${filePath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  fs.renameSync(tmp, filePath);
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function seedAdminIfNeeded() {
+  const users = readJson(USERS_JSON, []);
+  if (users.some((u) => u.role === "admin")) return;
+
+  const username = process.env.ADMIN_ID || "admin";
+  const email = process.env.ADMIN_EMAIL || "admin@example.com";
+  const password = process.env.ADMIN_PASSWORD || "admin1234";
+  const passwordHash = bcrypt.hashSync(password, 10);
+
+  users.push({
+    id: cryptoRandomId(),
+    role: "admin",
+    username,
+    email,
+    passwordHash,
+    createdAt: nowIso(),
+  });
+  writeJsonAtomic(USERS_JSON, users);
+  console.log(`[seed] admin created: ${username}`);
+}
+
+function ensureAdminUsername() {
+  const users = readJson(USERS_JSON, []);
+  const admin = users.find((u) => u.role === "admin");
+  if (!admin) return;
+  if (admin.username && String(admin.username).trim()) return;
+
+  const username = process.env.ADMIN_ID || "admin";
+  admin.username = username;
+  writeJsonAtomic(USERS_JSON, users);
+  console.log(`[migrate] admin username set: ${username}`);
+}
+
+function cryptoRandomId() {
+  // avoid requiring node:crypto for old node; simple unique-enough id for local use
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function requireAdmin(req, res, next) {
+  if (req.session?.user?.role === "admin") return next();
+  return res.redirect("/admin/login");
+}
+
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "views"));
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+app.use(
+  session({
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
+      maxAge: 24 * 60 * 60 * 1000,
+    },
+  })
+);
+
+app.use((req, res, next) => {
+  res.locals.user = req.session?.user || null;
+  next();
+});
+
+app.use("/uploads", express.static(UPLOADS_DIR));
+app.use("/image", express.static(IMAGE_DIR));
+app.use("/static", express.static(path.join(__dirname, "static")));
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+    filename: (req, file, cb) => {
+      const safeBase = path
+        .basename(file.originalname)
+        .replace(/[^\w.\- ]+/g, "_")
+        .slice(-120);
+      cb(null, `${Date.now()}-${safeBase}`);
+    },
+  }),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+});
+
+function listPrizes() {
+  const prizes = readJson(PRIZES_JSON, []);
+  return Array.isArray(prizes) ? prizes : [];
+}
+
+function savePrizes(prizes) {
+  writeJsonAtomic(PRIZES_JSON, prizes);
+}
+
+function parseNumberLoose(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const cleaned = s.replace(/[^\d.\-]/g, "");
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeCellText(v) {
+  if (v === null || v === undefined) return "";
+  return String(v).replace(/\s+/g, " ").trim();
+}
+
+function stripBrackets(s) {
+  const t = String(s || "").trim();
+  const m = t.match(/^[\[\(（【「『](.*)[\]\)）】」』]$/);
+  return (m ? m[1] : t).trim();
+}
+
+function guessSetNameFromTitle(title) {
+  const t = String(title || "");
+  const m = t.match(/セット\s*([A-Za-zＡ-Ｚａ-ｚ])/);
+  if (!m) return "";
+  const letter = m[1].toUpperCase().replace(/[Ａ-Ｚ]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
+  return `${letter}セット`;
+}
+
+function isLikelyLegacyBlockSheet(aoa) {
+  // Legacy: no header row with "title", but has bracketed category like [テーマパーク] and rows like TDRO3A-2405
+  const flat = aoa.flat().slice(0, 200).map(normalizeCellText).filter(Boolean);
+  const hasTitleHeader = flat.some((x) => x.toLowerCase() === "title" || x.toLowerCase() === "setname");
+  if (hasTitleHeader) return false;
+  const hasBracketCategory = flat.some((x) => /^[\[\(（【「『].+[\]\)）】」』]$/.test(x));
+  const hasCodeLike = flat.some((x) => /^[A-Za-z]{2,}\d+[A-Za-z]?(?:[-－ー]\d{3,})?$/.test(x));
+  return hasBracketCategory && hasCodeLike;
+}
+
+function parseLegacyBlockAoA(aoa) {
+  // Legacy "block" format. Columns may shift due to merged cells; we scan the whole row.
+  // We parse groups:
+  // - Category row: A like [テーマパーク]
+  // - Group header row: A code like TDRO3A-2405, B like [ディズニー...], C has 販売価格
+  // - Item rows: B starts with "・" or bullet-like, C has line price (optional)
+  // - Total row: B empty, C numeric total
+  let currentCategory = "";
+  const prizes = [];
+
+  let current = null; // { title, category, setName, items: [], total: number|null }
+  const BRACKET_RE = /^[\[\(（【「『].+[\]\)）】」』]$/;
+  // Examples: TDRO3A-2405, TDRO3A－2405, JCB03A (no hyphen)
+  const CODE_RE = /^[A-Za-z]{2,}\d+[A-Za-z]?(?:[-－ー]\d{3,})?$/;
+
+  function flush() {
+    if (!current) return;
+    const title = normalizeCellText(current.title);
+    if (!title) {
+      current = null;
+      return;
+    }
+    const description = current.items
+      .map((x) => normalizeCellText(x).replace(/^[・•\-\u2212]\s*/, ""))
+      .filter(Boolean)
+      .join(" / ");
+    const priceYen = current.total ?? 0;
+    const setName = current.setName || guessSetNameFromTitle(title);
+    prizes.push({
+      id: cryptoRandomId(),
+      title,
+      description,
+      category: current.category || "",
+      setName,
+      tags: [],
+      priceYen,
+      quantity: 0,
+      imagePath: "",
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    });
+    current = null;
+  }
+
+  function rowCells(row) {
+    return (row || []).map(normalizeCellText);
+  }
+
+  function nonEmptyCells(cells) {
+    return cells.map((v, idx) => ({ v, idx })).filter((x) => x.v);
+  }
+
+  function findFirstIndex(cells, pred) {
+    for (let i = 0; i < cells.length; i++) if (pred(cells[i], i)) return i;
+    return -1;
+  }
+
+  function pickFirst(cells, pred) {
+    const idx = findFirstIndex(cells, pred);
+    return idx >= 0 ? cells[idx] : "";
+  }
+
+  function extractRowNumbers(cells) {
+    const nums = [];
+    for (const v of cells) {
+      const n = parseNumberLoose(v);
+      if (n !== null) nums.push(n);
+    }
+    return nums;
+  }
+
+  for (let i = 0; i < aoa.length; i++) {
+    const cells = rowCells(aoa[i]);
+    const nonEmpty = nonEmptyCells(cells);
+
+    // Category row like [テーマパーク]
+    if (nonEmpty.length === 1 && BRACKET_RE.test(nonEmpty[0].v)) {
+      currentCategory = stripBrackets(nonEmpty[0].v);
+      continue;
+    }
+
+    // Start of a group: a code-like cell + a title cell (usually bracketed)
+    const codeIdx = findFirstIndex(cells, (v) => CODE_RE.test(v));
+    const bracketTitleIdx = findFirstIndex(cells, (v) => BRACKET_RE.test(v));
+    const titleFallbackIdx =
+      bracketTitleIdx >= 0
+        ? bracketTitleIdx
+        : findFirstIndex(cells, (v, idx) => idx !== codeIdx && /セット/.test(v));
+
+    if (codeIdx >= 0 && titleFallbackIdx >= 0) {
+      flush();
+      const rawTitle = cells[titleFallbackIdx];
+      const title = stripBrackets(rawTitle);
+      current = {
+        title,
+        category: currentCategory,
+        setName: guessSetNameFromTitle(title),
+        items: [],
+        total: null,
+      };
+      continue;
+    }
+
+    if (!current) continue;
+
+    // Item row: first cell that looks like a bullet list entry
+    const item = pickFirst(cells, (v) => /^[・•\-\u2212]/.test(v));
+    if (item) {
+      current.items.push(item);
+      continue;
+    }
+
+    // Total row: a row that mainly contains a number (often the sum)
+    const nums = extractRowNumbers(cells);
+    if (nums.length) {
+      // Heuristic: if there's a single number and little other text, treat it as total
+      const hasOtherText = nonEmpty.some((x) => parseNumberLoose(x.v) === null);
+      if (!hasOtherText || nonEmpty.length <= 2) {
+        current.total = Math.max(...nums);
+        continue;
+      }
+    }
+  }
+
+  flush();
+  return prizes;
+}
+
+function findUserByIdentifier(identifier) {
+  const users = readJson(USERS_JSON, []);
+  const key = String(identifier || "").toLowerCase();
+  return users.find((u) => {
+    const username = String(u.username || "").toLowerCase();
+    const email = String(u.email || "").toLowerCase();
+    return username === key || email === key;
+  });
+}
+
+// ---- Public ----
+app.get("/", (req, res) => res.redirect("/prizes"));
+
+app.get("/prizes", (req, res) => {
+  const q = String(req.query.q || "").trim().toLowerCase();
+  const quantityStr = String(req.query.quantity || "").trim();
+  const quantity = quantityStr ? Number(quantityStr) : null;
+  const priceRange = String(req.query.priceRange || "").trim();
+
+  const prizes = listPrizes();
+  const filtered = prizes.filter((p) => {
+    const matchesQ =
+      !q ||
+      String(p.title || "").toLowerCase().includes(q) ||
+      String(p.description || "").toLowerCase().includes(q) ||
+      (Array.isArray(p.tags) && p.tags.some((t) => String(t).toLowerCase().includes(q)));
+    const matchesQuantity =
+      quantityStr === "" ||
+      (() => {
+        const title = String(p.title || "");
+        // If user typed a number, match either quantity field or number contained in title.
+        if (Number.isFinite(quantity)) {
+          if (Number(p.quantity || 0) === quantity) return true;
+          const n = String(quantity);
+          const nFw = n.replace(/[0-9]/g, (d) => String.fromCharCode(d.charCodeAt(0) + 0xfee0)); // ３など
+          return title.includes(n) || title.includes(nFw);
+        }
+        // If user typed non-numeric, treat it as substring against title.
+        return title.includes(quantityStr);
+      })();
+    const matchesPrice =
+      !priceRange ||
+      (() => {
+        const price = Number(p.priceYen || 0);
+        if (!Number.isFinite(price) || price <= 0) return false;
+        const m = priceRange.match(/^(\d+)-(\d+)?$/);
+        if (!m) return true;
+        const min = Number(m[1]);
+        const max = m[2] ? Number(m[2]) : null;
+        if (!Number.isFinite(min)) return true;
+        if (max === null) return price >= min;
+        return price >= min && price < max;
+      })();
+    return matchesQ && matchesQuantity && matchesPrice;
+  });
+
+  res.render("public_index", { prizes: filtered, q, quantityStr, priceRange });
+});
+
+app.get("/prizes/:id", (req, res) => {
+  const prizes = listPrizes();
+  const prize = prizes.find((p) => p.id === req.params.id);
+  if (!prize) return res.status(404).send("Not found");
+  res.render("public_detail", { prize });
+});
+
+// ---- Admin auth ----
+app.get("/admin", (req, res) => res.redirect("/admin/prizes"));
+
+app.get("/admin/login", (req, res) => {
+  res.render("admin_login", { error: null });
+});
+
+app.post("/admin/login", async (req, res) => {
+  const { username, password } = req.body || {};
+  const user = findUserByIdentifier(username || "");
+  if (!user) return res.status(401).render("admin_login", { error: "ログイン情報が違います" });
+
+  const ok = await bcrypt.compare(String(password || ""), user.passwordHash);
+  if (!ok) return res.status(401).render("admin_login", { error: "ログイン情報が違います" });
+
+  req.session.user = { id: user.id, role: user.role, username: user.username || "", email: user.email || "" };
+  res.redirect("/admin/prizes");
+});
+
+app.post("/admin/logout", (req, res) => {
+  req.session.destroy(() => res.redirect("/admin/login"));
+});
+
+// ---- Admin prizes ----
+app.get("/admin/prizes", requireAdmin, (req, res) => {
+  const q = String(req.query.q || "").trim().toLowerCase();
+  const prizes = listPrizes();
+  const filtered = !q
+    ? prizes
+    : prizes.filter(
+        (p) =>
+          String(p.title || "").toLowerCase().includes(q) ||
+          String(p.description || "").toLowerCase().includes(q)
+      );
+  res.render("admin_prizes", { prizes: filtered, q, user: req.session.user });
+});
+
+app.get("/admin/prizes/new", requireAdmin, (req, res) => {
+  res.render("admin_prize_form", { mode: "new", prize: null, error: null, user: req.session.user });
+});
+
+app.get("/admin/quick-add", requireAdmin, (req, res) => {
+  res.render("admin_quick_add", { error: null, form: {}, user: req.session.user });
+});
+
+app.post("/admin/quick-add", requireAdmin, upload.single("image"), (req, res) => {
+  try {
+    const { title, priceYen } = req.body || {};
+    if (!title) {
+      return res.status(400).render("admin_quick_add", {
+        error: "名前（タイトル）は必須です",
+        form: { title, priceYen },
+        user: req.session.user,
+      });
+    }
+
+    const prizes = listPrizes();
+    prizes.push({
+      id: cryptoRandomId(),
+      title: String(title).trim(),
+      description: "",
+      category: "",
+      setName: "",
+      priceYen: priceYen ? Number(priceYen) : 0,
+      quantity: 0,
+      tags: [],
+      imagePath: req.file ? `/uploads/${req.file.filename}` : DEFAULT_IMAGE_PATH,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    });
+    savePrizes(prizes);
+    res.redirect("/admin/prizes");
+  } catch (e) {
+    res.status(500).send(String(e));
+  }
+});
+
+app.post("/admin/prizes/new", requireAdmin, upload.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), (req, res) => {
+  try {
+    const { title, description, category, tags, setName, priceYen, quantity } = req.body || {};
+    if (!title) {
+      return res.status(400).render("admin_prize_form", {
+        mode: "new",
+        prize: null,
+        error: "タイトルは必須です",
+        user: req.session.user,
+      });
+    }
+
+    const prizes = listPrizes();
+    const mainFile = req.files?.image?.[0] || null;
+    const detailFile = req.files?.detailImage?.[0] || null;
+    const prize = {
+      id: cryptoRandomId(),
+      title: String(title).trim(),
+      description: String(description || "").trim(),
+      category: String(category || "").trim(),
+      setName: String(setName || "").trim(),
+      priceYen: priceYen ? Number(priceYen) : 0,
+      quantity: quantity ? Number(quantity) : 0,
+      tags: String(tags || "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean),
+      imagePath: mainFile ? `/uploads/${mainFile.filename}` : DEFAULT_IMAGE_PATH,
+      detailImagePath: detailFile ? `/uploads/${detailFile.filename}` : "",
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    prizes.push(prize);
+    savePrizes(prizes);
+    res.redirect("/admin/prizes");
+  } catch (e) {
+    res.status(500).send(String(e));
+  }
+});
+
+app.get("/admin/prizes/:id/edit", requireAdmin, (req, res) => {
+  const prizes = listPrizes();
+  const prize = prizes.find((p) => p.id === req.params.id);
+  if (!prize) return res.status(404).send("Not found");
+  res.render("admin_prize_form", { mode: "edit", prize, error: null, user: req.session.user });
+});
+
+app.post("/admin/prizes/:id/edit", requireAdmin, upload.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), (req, res) => {
+  const prizes = listPrizes();
+  const idx = prizes.findIndex((p) => p.id === req.params.id);
+  if (idx < 0) return res.status(404).send("Not found");
+
+  const current = prizes[idx];
+  const { title, description, category, tags, setName, priceYen, quantity } = req.body || {};
+  const mainFile = req.files?.image?.[0] || null;
+  const detailFile = req.files?.detailImage?.[0] || null;
+  const removeDetailImage = String(req.body?.removeDetailImage || "") === "1";
+
+  if (!title) {
+    return res.status(400).render("admin_prize_form", {
+      mode: "edit",
+      prize: { ...current, ...req.body },
+      error: "タイトルは必須です",
+      user: req.session.user,
+    });
+  }
+
+  prizes[idx] = {
+    ...current,
+    title: String(title).trim(),
+    description: String(description || "").trim(),
+    category: String(category || "").trim(),
+    setName: String(setName || "").trim(),
+    priceYen: priceYen ? Number(priceYen) : 0,
+    quantity: quantity ? Number(quantity) : 0,
+    tags: String(tags || "")
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean),
+    imagePath: mainFile ? `/uploads/${mainFile.filename}` : current.imagePath,
+    detailImagePath: detailFile ? `/uploads/${detailFile.filename}` : (removeDetailImage ? "" : (current.detailImagePath || "")),
+    updatedAt: nowIso(),
+  };
+
+  savePrizes(prizes);
+  res.redirect("/admin/prizes");
+});
+
+app.post("/admin/prizes/:id/delete", requireAdmin, (req, res) => {
+  const prizes = listPrizes();
+  const next = prizes.filter((p) => p.id !== req.params.id);
+  savePrizes(next);
+  res.redirect("/admin/prizes");
+});
+
+// ---- CSV import (admin) ----
+app.get("/admin/import", requireAdmin, (req, res) => {
+  res.render("admin_import", { error: null, user: req.session.user });
+});
+
+app.post("/admin/import", requireAdmin, upload.single("csv"), async (req, res) => {
+  if (!req.file) return res.status(400).render("admin_import", { error: "CSVを選択してください", user: req.session.user });
+
+  const csvPath = path.join(UPLOADS_DIR, req.file.filename);
+  const rows = [];
+
+  try {
+    const ext = path.extname(req.file.originalname || "").toLowerCase();
+    const isExcel = ext === ".xlsx" || ext === ".xls" || ext === ".xlsm";
+
+    if (isExcel) {
+      const wb = XLSX.readFile(csvPath, { cellDates: true });
+      const firstSheetName = wb.SheetNames?.[0];
+      if (!firstSheetName) {
+        return res.status(400).render("admin_import", { error: "Excelにシートがありません", user: req.session.user });
+      }
+      const ws = wb.Sheets[firstSheetName];
+      const jsonRows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
+      const hasHeaderStyle = jsonRows.length > 0 && Object.keys(jsonRows[0] || {}).some((k) => String(k).toLowerCase() === "title");
+      if (hasHeaderStyle) {
+        rows.push(...jsonRows);
+      } else {
+        const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
+        const legacy = isLikelyLegacyBlockSheet(aoa) ? parseLegacyBlockAoA(aoa) : [];
+        if (!legacy.length) {
+          return res.status(400).render("admin_import", {
+            error: "Excel形式を判定できませんでした。1行目ヘッダーの表形式（title列あり）にするか、CSVで取り込んでください。",
+            user: req.session.user,
+          });
+        }
+        // Convert to row objects so the same mapping logic can be used below
+        legacy.forEach((p) =>
+          rows.push({
+            title: p.title,
+            description: p.description,
+            category: p.category,
+            setName: p.setName,
+            tags: (p.tags || []).join(","),
+            priceYen: p.priceYen,
+            quantity: p.quantity,
+          })
+        );
+      }
+    } else {
+      await new Promise((resolve, reject) => {
+        fs.createReadStream(csvPath)
+          .pipe(
+            parse({
+              columns: true,
+              skip_empty_lines: true,
+              trim: true,
+            })
+          )
+          .on("data", (r) => rows.push(r))
+          .on("end", resolve)
+          .on("error", reject);
+      });
+    }
+
+    const prizes = listPrizes();
+    const toAdd = rows.map((r) => ({
+      id: cryptoRandomId(),
+      title: String(r.title || r.name || "").trim(),
+      description: String(r.description || "").trim(),
+      category: String(r.category || "").trim(),
+      setName: String(r.setName || r.set || "").trim(),
+      tags: String(r.tags || "")
+        .split(/[,、]/)
+        .map((t) => t.trim())
+        .filter(Boolean),
+      priceYen: parseNumberLoose(r.priceYen ?? r.price ?? r.price_yen) ?? 0,
+      quantity: parseNumberLoose(r.quantity ?? r.qty) ?? 0,
+      imagePath: DEFAULT_IMAGE_PATH,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    })).filter((p) => p.title);
+
+    savePrizes([...prizes, ...toAdd]);
+    res.redirect("/admin/prizes");
+  } catch (e) {
+    res.status(500).render("admin_import", { error: `CSV取り込みに失敗しました: ${e}`, user: req.session.user });
+  } finally {
+    // keep uploaded CSV? remove to avoid clutter
+    try { fs.unlinkSync(csvPath); } catch {}
+  }
+});
+
+ensureDirs();
+seedAdminIfNeeded();
+ensureAdminUsername();
+
+app.listen(PORT, () => {
+  console.log(`prizes app listening on http://localhost:${PORT}`);
+  console.log(`public: http://localhost:${PORT}/prizes`);
+  console.log(`admin:  http://localhost:${PORT}/admin/login`);
+});
+
