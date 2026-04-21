@@ -575,9 +575,7 @@ app.get("/prizes", async (req, res) => {
   const filtered = prizes.filter((p) => {
     const matchesQ =
       !q ||
-      String(p.title || "").toLowerCase().includes(q) ||
-      String(p.description || "").toLowerCase().includes(q) ||
-      (Array.isArray(p.tags) && p.tags.some((t) => String(t).toLowerCase().includes(q)));
+      String(p.title || "").toLowerCase().includes(q);
     const matchesQuantity =
       quantityStr === "" ||
       (() => {
@@ -648,8 +646,7 @@ app.get("/admin/prizes", requireAdmin, async (req, res) => {
     ? prizes
     : prizes.filter(
         (p) =>
-          String(p.title || "").toLowerCase().includes(q) ||
-          String(p.description || "").toLowerCase().includes(q)
+          String(p.title || "").toLowerCase().includes(q)
       );
   res.render("admin_prizes", { prizes: filtered, q, user: req.session.user });
 });
