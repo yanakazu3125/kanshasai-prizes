@@ -9,6 +9,7 @@ const multer = require("multer");
 const { parse } = require("csv-parse");
 const XLSX = require("xlsx");
 const mongoose = require("mongoose");
+const { v2: cloudinary } = require("cloudinary");
 
 const app = express();
 
@@ -16,6 +17,12 @@ const PORT = Number(process.env.PORT || 3001);
 const SESSION_SECRET = process.env.SESSION_SECRET || "change-me";
 const MONGODB_URI = process.env.MONGODB_URI || "";
 const USE_MONGO = Boolean(MONGODB_URI);
+const CLOUDINARY_URL = process.env.CLOUDINARY_URL || "";
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || "";
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || "";
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || "";
+const CLOUDINARY_FOLDER = process.env.CLOUDINARY_FOLDER || "kanshasai-prizes";
+const USE_CLOUDINARY = Boolean(CLOUDINARY_URL || (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET));
 
 const DATA_DIR = path.join(__dirname, "data");
 const UPLOADS_DIR = path.join(__dirname, "uploads");
@@ -66,7 +73,9 @@ function defineModels() {
       priceYen: { type: Number, default: 0 },
       quantity: { type: Number, default: 0 },
       imagePath: { type: String, default: "" },
+      imagePublicId: { type: String, default: "" },
       detailImagePath: { type: String, default: "" },
+      detailImagePublicId: { type: String, default: "" },
       createdAt: { type: String, default: "" },
       updatedAt: { type: String, default: "" },
     },
@@ -195,21 +204,81 @@ app.use("/uploads", express.static(UPLOADS_DIR));
 app.use("/image", express.static(IMAGE_DIR));
 app.use("/static", express.static(path.join(__dirname, "static")));
 
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-    filename: (req, file, cb) => {
-      const safeBase = path
-        .basename(file.originalname)
-        .replace(/[^\w.\- ]+/g, "_")
-        .slice(-120);
-      cb(null, `${Date.now()}-${safeBase}`);
-    },
-  }),
-  limits: {
-    fileSize: 5 * 1024 * 1024,
-  },
-});
+function createDiskUpload() {
+  return multer({
+    storage: multer.diskStorage({
+      destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+      filename: (req, file, cb) => {
+        const safeBase = path
+          .basename(file.originalname)
+          .replace(/[^\w.\- ]+/g, "_")
+          .slice(-120);
+        cb(null, `${Date.now()}-${safeBase}`);
+      },
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },
+  });
+}
+
+function createMemoryUpload() {
+  return multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+  });
+}
+
+const uploadCsv = createDiskUpload(); // csv/xlsx import uses temp file
+const uploadImages = USE_CLOUDINARY ? createMemoryUpload() : createDiskUpload();
+
+if (USE_CLOUDINARY) {
+  cloudinary.config(
+    CLOUDINARY_URL
+      ? { secure: true }
+      : {
+          cloud_name: CLOUDINARY_CLOUD_NAME,
+          api_key: CLOUDINARY_API_KEY,
+          api_secret: CLOUDINARY_API_SECRET,
+          secure: true,
+        }
+  );
+}
+
+async function uploadImageToCloudinary(file, opts = {}) {
+  if (!USE_CLOUDINARY) throw new Error("Cloudinary is not configured");
+  if (!file?.buffer) throw new Error("No file buffer");
+  const folder = opts.folder || CLOUDINARY_FOLDER;
+  const publicIdPrefix = opts.publicIdPrefix || "";
+  const base = path.basename(file.originalname || "image").replace(/\.[^/.]+$/, "");
+  const safeBase = base.replace(/[^\w.\- ]+/g, "_").slice(-80);
+  const public_id = `${publicIdPrefix}${Date.now()}-${safeBase}`.replace(/\s+/g, "_");
+
+  return await new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        public_id,
+        resource_type: "image",
+        overwrite: false,
+      },
+      (err, result) => {
+        if (err) return reject(err);
+        resolve({ url: result.secure_url, publicId: result.public_id });
+      }
+    );
+    stream.end(file.buffer);
+  });
+}
+
+async function deleteCloudinaryImage(publicId) {
+  if (!USE_CLOUDINARY) return;
+  const pid = String(publicId || "").trim();
+  if (!pid) return;
+  try {
+    await cloudinary.uploader.destroy(pid, { resource_type: "image" });
+  } catch (e) {
+    console.warn("[cloudinary] destroy warning:", e?.message || e);
+  }
+}
 
 function listPrizes() {
   if (USE_MONGO) {
@@ -566,7 +635,7 @@ app.get("/admin/quick-add", requireAdmin, (req, res) => {
   res.render("admin_quick_add", { error: null, form: {}, user: req.session.user });
 });
 
-app.post("/admin/quick-add", requireAdmin, upload.single("image"), async (req, res) => {
+app.post("/admin/quick-add", requireAdmin, uploadImages.single("image"), async (req, res) => {
   try {
     const { title, priceYen } = req.body || {};
     if (!title) {
@@ -575,6 +644,18 @@ app.post("/admin/quick-add", requireAdmin, upload.single("image"), async (req, r
         form: { title, priceYen },
         user: req.session.user,
       });
+    }
+
+    let imagePath = DEFAULT_IMAGE_PATH;
+    let imagePublicId = "";
+    if (req.file) {
+      if (USE_CLOUDINARY) {
+        const uploaded = await uploadImageToCloudinary(req.file, { publicIdPrefix: "main-" });
+        imagePath = uploaded.url;
+        imagePublicId = uploaded.publicId;
+      } else {
+        imagePath = `/uploads/${req.file.filename}`;
+      }
     }
 
     await insertPrize({
@@ -586,7 +667,10 @@ app.post("/admin/quick-add", requireAdmin, upload.single("image"), async (req, r
       priceYen: priceYen ? Number(priceYen) : 0,
       quantity: 0,
       tags: [],
-      imagePath: req.file ? `/uploads/${req.file.filename}` : DEFAULT_IMAGE_PATH,
+      imagePath,
+      imagePublicId,
+      detailImagePath: "",
+      detailImagePublicId: "",
       createdAt: nowIso(),
       updatedAt: nowIso(),
     });
@@ -596,7 +680,7 @@ app.post("/admin/quick-add", requireAdmin, upload.single("image"), async (req, r
   }
 });
 
-app.post("/admin/prizes/new", requireAdmin, upload.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), async (req, res) => {
+app.post("/admin/prizes/new", requireAdmin, uploadImages.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), async (req, res) => {
   try {
     const { title, description, category, tags, setName, priceYen, quantity } = req.body || {};
     if (!title) {
@@ -610,6 +694,31 @@ app.post("/admin/prizes/new", requireAdmin, upload.fields([{ name: "image", maxC
 
     const mainFile = req.files?.image?.[0] || null;
     const detailFile = req.files?.detailImage?.[0] || null;
+
+    let imagePath = DEFAULT_IMAGE_PATH;
+    let imagePublicId = "";
+    if (mainFile) {
+      if (USE_CLOUDINARY) {
+        const uploaded = await uploadImageToCloudinary(mainFile, { publicIdPrefix: "main-" });
+        imagePath = uploaded.url;
+        imagePublicId = uploaded.publicId;
+      } else {
+        imagePath = `/uploads/${mainFile.filename}`;
+      }
+    }
+
+    let detailImagePath = "";
+    let detailImagePublicId = "";
+    if (detailFile) {
+      if (USE_CLOUDINARY) {
+        const uploaded = await uploadImageToCloudinary(detailFile, { publicIdPrefix: "detail-" });
+        detailImagePath = uploaded.url;
+        detailImagePublicId = uploaded.publicId;
+      } else {
+        detailImagePath = `/uploads/${detailFile.filename}`;
+      }
+    }
+
     const prize = {
       id: cryptoRandomId(),
       title: String(title).trim(),
@@ -622,8 +731,10 @@ app.post("/admin/prizes/new", requireAdmin, upload.fields([{ name: "image", maxC
         .split(",")
         .map((t) => t.trim())
         .filter(Boolean),
-      imagePath: mainFile ? `/uploads/${mainFile.filename}` : DEFAULT_IMAGE_PATH,
-      detailImagePath: detailFile ? `/uploads/${detailFile.filename}` : "",
+      imagePath,
+      imagePublicId,
+      detailImagePath,
+      detailImagePublicId,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -640,7 +751,7 @@ app.get("/admin/prizes/:id/edit", requireAdmin, async (req, res) => {
   res.render("admin_prize_form", { mode: "edit", prize, error: null, user: req.session.user });
 });
 
-app.post("/admin/prizes/:id/edit", requireAdmin, upload.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), async (req, res) => {
+app.post("/admin/prizes/:id/edit", requireAdmin, uploadImages.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), async (req, res) => {
   const current = await findPrizeById(req.params.id);
   if (!current) return res.status(404).send("Not found");
 
@@ -658,6 +769,39 @@ app.post("/admin/prizes/:id/edit", requireAdmin, upload.fields([{ name: "image",
     });
   }
 
+  let nextImagePath = current.imagePath;
+  let nextImagePublicId = current.imagePublicId || "";
+  if (mainFile) {
+    if (USE_CLOUDINARY) {
+      const uploaded = await uploadImageToCloudinary(mainFile, { publicIdPrefix: "main-" });
+      nextImagePath = uploaded.url;
+      // delete old only if it was cloudinary-managed
+      await deleteCloudinaryImage(nextImagePublicId);
+      nextImagePublicId = uploaded.publicId;
+    } else {
+      nextImagePath = `/uploads/${mainFile.filename}`;
+      nextImagePublicId = "";
+    }
+  }
+
+  let nextDetailImagePath = current.detailImagePath || "";
+  let nextDetailImagePublicId = current.detailImagePublicId || "";
+  if (detailFile) {
+    if (USE_CLOUDINARY) {
+      const uploaded = await uploadImageToCloudinary(detailFile, { publicIdPrefix: "detail-" });
+      await deleteCloudinaryImage(nextDetailImagePublicId);
+      nextDetailImagePath = uploaded.url;
+      nextDetailImagePublicId = uploaded.publicId;
+    } else {
+      nextDetailImagePath = `/uploads/${detailFile.filename}`;
+      nextDetailImagePublicId = "";
+    }
+  } else if (removeDetailImage) {
+    await deleteCloudinaryImage(nextDetailImagePublicId);
+    nextDetailImagePath = "";
+    nextDetailImagePublicId = "";
+  }
+
   await updatePrizeById(req.params.id, {
     title: String(title).trim(),
     description: String(description || "").trim(),
@@ -669,8 +813,10 @@ app.post("/admin/prizes/:id/edit", requireAdmin, upload.fields([{ name: "image",
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean),
-    imagePath: mainFile ? `/uploads/${mainFile.filename}` : current.imagePath,
-    detailImagePath: detailFile ? `/uploads/${detailFile.filename}` : (removeDetailImage ? "" : (current.detailImagePath || "")),
+    imagePath: nextImagePath,
+    imagePublicId: nextImagePublicId,
+    detailImagePath: nextDetailImagePath,
+    detailImagePublicId: nextDetailImagePublicId,
     updatedAt: nowIso(),
   });
   res.redirect("/admin/prizes");
@@ -686,7 +832,7 @@ app.get("/admin/import", requireAdmin, (req, res) => {
   res.render("admin_import", { error: null, user: req.session.user });
 });
 
-app.post("/admin/import", requireAdmin, upload.single("csv"), async (req, res) => {
+app.post("/admin/import", requireAdmin, uploadCsv.single("csv"), async (req, res) => {
   if (!req.file) return res.status(400).render("admin_import", { error: "CSVを選択してください", user: req.session.user });
 
   const csvPath = path.join(UPLOADS_DIR, req.file.filename);
@@ -758,6 +904,9 @@ app.post("/admin/import", requireAdmin, upload.single("csv"), async (req, res) =
       priceYen: parseNumberLoose(r.priceYen ?? r.price ?? r.price_yen) ?? 0,
       quantity: parseNumberLoose(r.quantity ?? r.qty) ?? 0,
       imagePath: DEFAULT_IMAGE_PATH,
+      imagePublicId: "",
+      detailImagePath: "",
+      detailImagePublicId: "",
       createdAt: nowIso(),
       updatedAt: nowIso(),
     })).filter((p) => p.title);
