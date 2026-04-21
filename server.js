@@ -10,6 +10,7 @@ const { parse } = require("csv-parse");
 const XLSX = require("xlsx");
 const mongoose = require("mongoose");
 const { v2: cloudinary } = require("cloudinary");
+const crypto = require("crypto");
 
 const app = express();
 
@@ -23,6 +24,7 @@ const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || "";
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || "";
 const CLOUDINARY_FOLDER = process.env.CLOUDINARY_FOLDER || "kanshasai-prizes";
 const USE_CLOUDINARY = Boolean(CLOUDINARY_URL || (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET));
+const CLOUDINARY_DEDUP = (process.env.CLOUDINARY_DEDUP || "1") === "1";
 
 const DATA_DIR = path.join(__dirname, "data");
 const UPLOADS_DIR = path.join(__dirname, "uploads");
@@ -248,29 +250,54 @@ async function uploadImageToCloudinary(file, opts = {}) {
   if (!file?.buffer) throw new Error("No file buffer");
   const folder = opts.folder || CLOUDINARY_FOLDER;
   const publicIdPrefix = opts.publicIdPrefix || "";
-  const base = path.basename(file.originalname || "image").replace(/\.[^/.]+$/, "");
-  const safeBase = base.replace(/[^\w.\- ]+/g, "_").slice(-80);
-  const public_id = `${publicIdPrefix}${Date.now()}-${safeBase}`.replace(/\s+/g, "_");
+  let public_id = "";
 
-  return await new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        folder,
-        public_id,
-        resource_type: "image",
-        overwrite: false,
-      },
-      (err, result) => {
-        if (err) return reject(err);
-        resolve({ url: result.secure_url, publicId: result.public_id });
+  if (CLOUDINARY_DEDUP) {
+    const hash = crypto.createHash("sha256").update(file.buffer).digest("hex");
+    public_id = `sha256-${hash}`;
+  } else {
+    const base = path.basename(file.originalname || "image").replace(/\.[^/.]+$/, "");
+    const safeBase = base.replace(/[^\w.\- ]+/g, "_").slice(-80);
+    public_id = `${publicIdPrefix}${Date.now()}-${safeBase}`.replace(/\s+/g, "_");
+  }
+
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          folder,
+          public_id,
+          resource_type: "image",
+          overwrite: false,
+        },
+        (err, r) => {
+          if (err) return reject(err);
+          resolve(r);
+        }
+      );
+      stream.end(file.buffer);
+    });
+    return { url: result.secure_url, publicId: result.public_id };
+  } catch (e) {
+    // If dedup is enabled and the asset already exists, reuse it.
+    if (CLOUDINARY_DEDUP) {
+      const fullPublicId = `${folder}/${public_id}`;
+      try {
+        const existing = await cloudinary.api.resource(fullPublicId, { resource_type: "image" });
+        return { url: existing.secure_url, publicId: existing.public_id };
+      } catch {
+        // fallthrough
       }
-    );
-    stream.end(file.buffer);
-  });
+    }
+    throw e;
+  }
 }
 
 async function deleteCloudinaryImage(publicId) {
   if (!USE_CLOUDINARY) return;
+  // When using content-hash dedup, the same asset may be referenced by multiple prizes.
+  // For safety, we only remove the reference (DB field) and keep the asset.
+  if (CLOUDINARY_DEDUP) return;
   const pid = String(publicId || "").trim();
   if (!pid) return;
   try {
