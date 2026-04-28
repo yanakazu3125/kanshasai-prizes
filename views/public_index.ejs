@@ -9,28 +9,19 @@
             <input name="q" value="${String(q || "").replaceAll('"', '&quot;')}" placeholder="例: ディズニー / 温泉 / Aセット" />
           </div>
         </div>
+        <input id="easyQuantity" type="hidden" name="quantity" value="${String(quantityStr || "").replaceAll('"', '&quot;')}" />
+        <input id="easyPriceRange" type="hidden" name="priceRange" value="${String(priceRange || "").replaceAll('"', '&quot;')}" />
         <div class="actions">
           <button class="btn" type="submit">検索</button>
-          <button class="btn secondary" type="button" onclick="window.__openEasySearch?.()">簡単検索</button>
           <a class="btn secondary" href="/prizes">リセット</a>
         </div>
-      </form>
-    </div>
 
-    <div id="easySearch" class="modal" aria-hidden="true">
-      <div class="backdrop" onclick="window.__closeEasySearch?.()"></div>
-      <div class="sheet" role="dialog" aria-modal="true" aria-label="簡単検索">
-        <div class="sheetHeader">
-          <div style="font-weight:800;">簡単！景品検索</div>
-          <button class="btn secondary" type="button" onclick="window.__closeEasySearch?.()">閉じる</button>
-        </div>
-        <form method="get" action="/prizes" style="margin:0;">
-          <input type="hidden" name="q" value="${String(q || "").replaceAll('"', '&quot;')}" />
-          <input id="easyQuantity" type="hidden" name="quantity" value="${String(quantityStr || "").replaceAll('"', '&quot;')}" />
-          <input id="easyPriceRange" type="hidden" name="priceRange" value="${String(priceRange || "").replaceAll('"', '&quot;')}" />
+        <div style="flex-basis:100%;height:0;"></div>
+        <div style="width:100%;margin-top:8px;">
+          <div style="font-weight:800;margin-bottom:6px;">簡単検索</div>
 
-          <div class="sheetSection">
-            <div class="sheetTitle">ご予算</div>
+          <div class="sheetSection" style="margin-top:0;padding-top:0;border-top:none;">
+            <div class="sheetTitle" style="margin-bottom:8px;">ご予算</div>
             <div class="pillGrid">
               <button class="pillBtn ${!priceRange ? "active" : ""}" type="button" data-target="priceRange" data-value="">指定なし</button>
               <button class="pillBtn ${priceRange === "0-10000" ? "active" : ""}" type="button" data-target="priceRange" data-value="0-10000">〜1万円</button>
@@ -44,7 +35,7 @@
           </div>
 
           <div class="sheetSection">
-            <div class="sheetTitle">景品点数</div>
+            <div class="sheetTitle" style="margin-bottom:8px;">景品点数</div>
             <div class="pillGrid">
               <button class="pillBtn ${!quantityStr ? "active" : ""}" type="button" data-target="quantity" data-value="">指定なし</button>
               <button class="pillBtn ${quantityStr === "1" ? "active" : ""}" type="button" data-target="quantity" data-value="1">1点</button>
@@ -57,37 +48,29 @@
             </div>
           </div>
 
-          <div class="sheetFooter">
+          <div class="sheetFooter" style="justify-content:flex-end;">
             <a class="btn secondary" href="/prizes" style="text-align:center;">条件リセット</a>
             <button class="btn" type="submit">この条件で検索</button>
           </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
 
     <script>
       (function(){
-        const root = document.getElementById('easySearch');
-        if(!root) return;
+        const root = document.currentScript && document.currentScript.parentElement;
         const qEl = document.getElementById('easyQuantity');
         const pEl = document.getElementById('easyPriceRange');
-        function setOpen(open){
-          root.classList.toggle('open', open);
-          root.setAttribute('aria-hidden', open ? 'false' : 'true');
-          document.body.style.overflow = open ? 'hidden' : '';
-        }
-        window.__openEasySearch = () => setOpen(true);
-        window.__closeEasySearch = () => setOpen(false);
-        root.addEventListener('click', (e) => {
+        if(!qEl || !pEl) return;
+        document.addEventListener('click', (e) => {
           const btn = e.target.closest && e.target.closest('button[data-target]');
           if(!btn) return;
           const target = btn.getAttribute('data-target');
           const value = btn.getAttribute('data-value') ?? '';
           if(target === 'quantity' && qEl) qEl.value = value;
           if(target === 'priceRange' && pEl) pEl.value = value;
-          root.querySelectorAll('button[data-target="'+target+'"]').forEach(b => b.classList.toggle('active', b === btn));
+          document.querySelectorAll('button[data-target="'+target+'"]').forEach(b => b.classList.toggle('active', b === btn));
         });
-        window.addEventListener('keydown', (e) => { if(e.key === 'Escape') setOpen(false); });
       })();
     </script>
 
