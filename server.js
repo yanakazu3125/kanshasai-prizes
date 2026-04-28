@@ -324,10 +324,14 @@ function savePrizes(prizes) {
 async function listPrizesAsync() {
   if (USE_MONGO) {
     defineModels();
-    const docs = await PrizeModel.find({}).lean();
+    const docs = await PrizeModel.find({})
+      .collation({ locale: "ja", strength: 1, numericOrdering: true })
+      .sort({ title: 1 })
+      .lean();
     return docs || [];
   }
-  return listPrizes();
+  const prizes = listPrizes();
+  return prizes.sort((a, b) => String(a?.title || "").localeCompare(String(b?.title || ""), "ja"));
 }
 
 async function findPrizeById(id) {
