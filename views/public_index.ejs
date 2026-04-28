@@ -5,34 +5,91 @@
       <form class="row" method="get" action="/prizes">
         <div style="flex:1; min-width:220px;">
           <div class="field">
-            <label>検索（タイトル/説明/タグ）</label>
-            <input name="q" value="${String(q || "").replaceAll('"', '&quot;')}" placeholder="例: コーヒー / お菓子 / Aセット" />
-          </div>
-        </div>
-        <div style="width:220px;">
-          <div class="field">
-            <label>セット数（点数）</label>
-            <input name="quantity" inputmode="numeric" value="${String(quantityStr || "").replaceAll('"', '&quot;')}" placeholder="例: 3" />
-          </div>
-        </div>
-        <div style="width:240px;">
-          <div class="field">
-            <label>金額帯</label>
-            <select name="priceRange">
-              <option value="" ${!priceRange ? "selected" : ""}>指定なし</option>
-              <option value="10000-30000" ${priceRange === "10000-30000" ? "selected" : ""}>1万〜3万</option>
-              <option value="30000-50000" ${priceRange === "30000-50000" ? "selected" : ""}>3万〜5万</option>
-              <option value="50000-100000" ${priceRange === "50000-100000" ? "selected" : ""}>5万〜10万</option>
-              <option value="100000-" ${priceRange === "100000-" ? "selected" : ""}>10万以上</option>
-            </select>
+            <label>検索（タイトル）</label>
+            <input name="q" value="${String(q || "").replaceAll('"', '&quot;')}" placeholder="例: ディズニー / 温泉 / Aセット" />
           </div>
         </div>
         <div class="actions">
           <button class="btn" type="submit">検索</button>
+          <button class="btn secondary" type="button" onclick="window.__openEasySearch?.()">簡単検索</button>
           <a class="btn secondary" href="/prizes">リセット</a>
         </div>
       </form>
     </div>
+
+    <div id="easySearch" class="modal" aria-hidden="true">
+      <div class="backdrop" onclick="window.__closeEasySearch?.()"></div>
+      <div class="sheet" role="dialog" aria-modal="true" aria-label="簡単検索">
+        <div class="sheetHeader">
+          <div style="font-weight:800;">簡単！景品検索</div>
+          <button class="btn secondary" type="button" onclick="window.__closeEasySearch?.()">閉じる</button>
+        </div>
+        <form method="get" action="/prizes" style="margin:0;">
+          <input type="hidden" name="q" value="${String(q || "").replaceAll('"', '&quot;')}" />
+          <input id="easyQuantity" type="hidden" name="quantity" value="${String(quantityStr || "").replaceAll('"', '&quot;')}" />
+          <input id="easyPriceRange" type="hidden" name="priceRange" value="${String(priceRange || "").replaceAll('"', '&quot;')}" />
+
+          <div class="sheetSection">
+            <div class="sheetTitle">ご予算</div>
+            <div class="pillGrid">
+              <button class="pillBtn ${!priceRange ? "active" : ""}" type="button" data-target="priceRange" data-value="">指定なし</button>
+              <button class="pillBtn ${priceRange === "0-10000" ? "active" : ""}" type="button" data-target="priceRange" data-value="0-10000">〜1万円</button>
+              <button class="pillBtn ${priceRange === "0-20000" ? "active" : ""}" type="button" data-target="priceRange" data-value="0-20000">〜2万円</button>
+              <button class="pillBtn ${priceRange === "0-30000" ? "active" : ""}" type="button" data-target="priceRange" data-value="0-30000">〜3万円</button>
+              <button class="pillBtn ${priceRange === "0-50000" ? "active" : ""}" type="button" data-target="priceRange" data-value="0-50000">〜5万円</button>
+              <button class="pillBtn ${priceRange === "0-70000" ? "active" : ""}" type="button" data-target="priceRange" data-value="0-70000">〜7万円</button>
+              <button class="pillBtn ${priceRange === "0-100000" ? "active" : ""}" type="button" data-target="priceRange" data-value="0-100000">〜10万円</button>
+              <button class="pillBtn ${priceRange === "100000-" ? "active" : ""}" type="button" data-target="priceRange" data-value="100000-">10万円〜</button>
+            </div>
+          </div>
+
+          <div class="sheetSection">
+            <div class="sheetTitle">景品点数</div>
+            <div class="pillGrid">
+              <button class="pillBtn ${!quantityStr ? "active" : ""}" type="button" data-target="quantity" data-value="">指定なし</button>
+              <button class="pillBtn ${quantityStr === "1" ? "active" : ""}" type="button" data-target="quantity" data-value="1">1点</button>
+              <button class="pillBtn ${quantityStr === "3" ? "active" : ""}" type="button" data-target="quantity" data-value="3">3点</button>
+              <button class="pillBtn ${quantityStr === "5" ? "active" : ""}" type="button" data-target="quantity" data-value="5">5点</button>
+              <button class="pillBtn ${quantityStr === "7" ? "active" : ""}" type="button" data-target="quantity" data-value="7">7点</button>
+              <button class="pillBtn ${quantityStr === "10" ? "active" : ""}" type="button" data-target="quantity" data-value="10">10点</button>
+              <button class="pillBtn ${quantityStr === "15" ? "active" : ""}" type="button" data-target="quantity" data-value="15">15点</button>
+              <button class="pillBtn ${quantityStr === "20" ? "active" : ""}" type="button" data-target="quantity" data-value="20">20点</button>
+            </div>
+          </div>
+
+          <div class="sheetFooter">
+            <a class="btn secondary" href="/prizes" style="text-align:center;">条件リセット</a>
+            <button class="btn" type="submit">この条件で検索</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      (function(){
+        const root = document.getElementById('easySearch');
+        if(!root) return;
+        const qEl = document.getElementById('easyQuantity');
+        const pEl = document.getElementById('easyPriceRange');
+        function setOpen(open){
+          root.classList.toggle('open', open);
+          root.setAttribute('aria-hidden', open ? 'false' : 'true');
+          document.body.style.overflow = open ? 'hidden' : '';
+        }
+        window.__openEasySearch = () => setOpen(true);
+        window.__closeEasySearch = () => setOpen(false);
+        root.addEventListener('click', (e) => {
+          const btn = e.target.closest && e.target.closest('button[data-target]');
+          if(!btn) return;
+          const target = btn.getAttribute('data-target');
+          const value = btn.getAttribute('data-value') ?? '';
+          if(target === 'quantity' && qEl) qEl.value = value;
+          if(target === 'priceRange' && pEl) pEl.value = value;
+          root.querySelectorAll('button[data-target="'+target+'"]').forEach(b => b.classList.toggle('active', b === btn));
+        });
+        window.addEventListener('keydown', (e) => { if(e.key === 'Escape') setOpen(false); });
+      })();
+    </script>
 
     <div class="panel">
       <div class="meta">件数: ${prizes.length}</div>
