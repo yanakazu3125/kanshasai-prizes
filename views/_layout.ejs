@@ -9,7 +9,12 @@
   <body class="<%= (typeof bodyClass !== 'undefined' && bodyClass) ? bodyClass : '' %>">
     <div class="container">
       <div class="topbar">
-        <div class="brand"><a href="/prizes" style="text-decoration:none;">景品紹介</a></div>
+        <div class="brand">
+          <a href="/prizes" style="text-decoration:none;">
+            <span class="brandMain">オーセモーション・プロダクツ</span>
+            <span class="brandSub">景品紹介</span>
+          </a>
+        </div>
         <div class="nav">
           <a class="pill" href="/prizes">一覧</a>
           <% if (user) { %>

@@ -24,7 +24,9 @@ a { color: inherit; }
   padding: 14px 18px; border: 1px solid var(--border); border-radius: 14px;
   background: rgba(17, 26, 51, 0.7); backdrop-filter: blur(8px);
 }
-.brand { font-weight: 700; letter-spacing: .02em; }
+.brand { font-weight: 900; letter-spacing: .02em; font-size: 30px; }
+.brand a { display: inline-flex; gap: 10px; align-items: baseline; }
+.brandMain, .brandSub { white-space: nowrap; word-break: keep-all; }
 .nav { display:flex; gap:10px; align-items:center; }
 .pill {
   padding: 8px 10px; border-radius: 999px; border: 1px solid var(--border);
@@ -52,6 +54,10 @@ a { color: inherit; }
   body.public-list .card .title { font-size: 13px; }
   body.public-list .meta { font-size: 12px; gap: 6px; }
   body.public-list .tag { font-size: 11px; padding: 2px 6px; }
+  .brand { font-size: 22px; }
+  .brand a { flex-direction: column; align-items: flex-start; gap: 2px; }
+  /* Hide header nav pills on mobile */
+  .nav { display: none; }
 }
 
 .card {
@@ -143,6 +149,7 @@ textarea { min-height: 120px; resize: vertical; }
 .sheetHeader { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .sheetSection { margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgba(255,255,255,0.14); }
 .sheetTitle { font-weight: 800; margin-bottom: 10px; }
+.easySearchHeading { font-weight: 900; font-size: 18px; margin-bottom: 8px; }
 .pillGrid { display:grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .pillBtn {
   border: 1px solid rgba(255,255,255,0.14);
@@ -152,6 +159,7 @@ textarea { min-height: 120px; resize: vertical; }
   border-radius: 14px;
   cursor: pointer;
   font-weight: 800;
+  font-size: 24px;
 }
 .pillBtn:hover { border-color: rgba(110,168,254,0.55); background: rgba(110,168,254,0.14); }
 .pillBtn.active { border-color: rgba(110,168,254,0.9); background: rgba(110,168,254,0.22); }
@@ -167,6 +175,8 @@ textarea { min-height: 120px; resize: vertical; }
     border-radius: 18px;
   }
   .pillGrid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .easySearchHeading { font-size: 20px; }
+  .pillBtn { font-size: 15px; padding: 13px 10px; }
 }
 
 .error {
