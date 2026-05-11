@@ -25,6 +25,7 @@ const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || "";
 const CLOUDINARY_FOLDER = process.env.CLOUDINARY_FOLDER || "kanshasai-prizes";
 const USE_CLOUDINARY = Boolean(CLOUDINARY_URL || (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET));
 const CLOUDINARY_DEDUP = (process.env.CLOUDINARY_DEDUP || "1") === "1";
+const DETAIL_IMAGE_MAX = 10;
 
 const DATA_DIR = path.join(__dirname, "data");
 const UPLOADS_DIR = path.join(__dirname, "uploads");
@@ -78,6 +79,10 @@ function defineModels() {
       imagePublicId: { type: String, default: "" },
       detailImagePath: { type: String, default: "" },
       detailImagePublicId: { type: String, default: "" },
+      detailImages: {
+        type: [{ path: String, publicId: String, caption: String }],
+        default: [],
+      },
       createdAt: { type: String, default: "" },
       updatedAt: { type: String, default: "" },
     },
@@ -98,6 +103,22 @@ function defineModels() {
 
   PrizeModel = mongoose.models.Prize || mongoose.model("Prize", prizeSchema);
   UserModel = mongoose.models.User || mongoose.model("User", userSchema);
+}
+
+function normalizePrize(prize) {
+  if (!prize) return prize;
+  if (!Array.isArray(prize.detailImages) || prize.detailImages.length === 0) {
+    if (prize.detailImagePath) {
+      prize.detailImages = [{
+        path: prize.detailImagePath,
+        publicId: prize.detailImagePublicId || "",
+        caption: "",
+      }];
+    } else {
+      prize.detailImages = [];
+    }
+  }
+  return prize;
 }
 
 async function initDbIfNeeded() {
@@ -231,6 +252,10 @@ function createMemoryUpload() {
 
 const uploadCsv = createDiskUpload(); // csv/xlsx import uses temp file
 const uploadImages = USE_CLOUDINARY ? createMemoryUpload() : createDiskUpload();
+const imageFieldConfig = [
+  { name: "image", maxCount: 1 },
+  ...Array.from({ length: DETAIL_IMAGE_MAX }, (_, i) => ({ name: `detailImage_${i}`, maxCount: 1 })),
+];
 
 if (USE_CLOUDINARY) {
   cloudinary.config(
@@ -328,19 +353,21 @@ async function listPrizesAsync() {
       .collation({ locale: "ja", strength: 1, numericOrdering: true })
       .sort({ title: 1 })
       .lean();
-    return docs || [];
+    return (docs || []).map(normalizePrize);
   }
   const prizes = listPrizes();
-  return prizes.sort((a, b) => String(a?.title || "").localeCompare(String(b?.title || ""), "ja"));
+  return prizes
+    .sort((a, b) => String(a?.title || "").localeCompare(String(b?.title || ""), "ja"))
+    .map(normalizePrize);
 }
 
 async function findPrizeById(id) {
   if (USE_MONGO) {
     defineModels();
-    return await PrizeModel.findOne({ id }).lean();
+    return normalizePrize(await PrizeModel.findOne({ id }).lean());
   }
   const prizes = listPrizes();
-  return prizes.find((p) => p.id === id) || null;
+  return normalizePrize(prizes.find((p) => p.id === id) || null);
 }
 
 async function insertPrize(prize) {
@@ -699,6 +726,7 @@ app.post("/admin/quick-add", requireAdmin, uploadImages.single("image"), async (
       imagePublicId,
       detailImagePath: "",
       detailImagePublicId: "",
+      detailImages: [],
       createdAt: nowIso(),
       updatedAt: nowIso(),
     });
@@ -708,7 +736,7 @@ app.post("/admin/quick-add", requireAdmin, uploadImages.single("image"), async (
   }
 });
 
-app.post("/admin/prizes/new", requireAdmin, uploadImages.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), async (req, res) => {
+app.post("/admin/prizes/new", requireAdmin, uploadImages.fields(imageFieldConfig), async (req, res) => {
   try {
     const { title, description, category, tags, setName, priceYen, quantity } = req.body || {};
     if (!title) {
@@ -721,7 +749,6 @@ app.post("/admin/prizes/new", requireAdmin, uploadImages.fields([{ name: "image"
     }
 
     const mainFile = req.files?.image?.[0] || null;
-    const detailFile = req.files?.detailImage?.[0] || null;
 
     let imagePath = DEFAULT_IMAGE_PATH;
     let imagePublicId = "";
@@ -735,15 +762,16 @@ app.post("/admin/prizes/new", requireAdmin, uploadImages.fields([{ name: "image"
       }
     }
 
-    let detailImagePath = "";
-    let detailImagePublicId = "";
-    if (detailFile) {
+    const detailImages = [];
+    for (let i = 0; i < DETAIL_IMAGE_MAX; i++) {
+      const file = req.files?.[`detailImage_${i}`]?.[0];
+      if (!file) continue;
+      const caption = String(req.body[`newCaption_${i}`] || "").trim();
       if (USE_CLOUDINARY) {
-        const uploaded = await uploadImageToCloudinary(detailFile, { publicIdPrefix: "detail-" });
-        detailImagePath = uploaded.url;
-        detailImagePublicId = uploaded.publicId;
+        const uploaded = await uploadImageToCloudinary(file, { publicIdPrefix: "detail-" });
+        detailImages.push({ path: uploaded.url, publicId: uploaded.publicId, caption });
       } else {
-        detailImagePath = `/uploads/${detailFile.filename}`;
+        detailImages.push({ path: `/uploads/${file.filename}`, publicId: "", caption });
       }
     }
 
@@ -761,8 +789,9 @@ app.post("/admin/prizes/new", requireAdmin, uploadImages.fields([{ name: "image"
         .filter(Boolean),
       imagePath,
       imagePublicId,
-      detailImagePath,
-      detailImagePublicId,
+      detailImagePath: "",
+      detailImagePublicId: "",
+      detailImages,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -779,14 +808,11 @@ app.get("/admin/prizes/:id/edit", requireAdmin, async (req, res) => {
   res.render("admin_prize_form", { mode: "edit", prize, error: null, user: req.session.user });
 });
 
-app.post("/admin/prizes/:id/edit", requireAdmin, uploadImages.fields([{ name: "image", maxCount: 1 }, { name: "detailImage", maxCount: 1 }]), async (req, res) => {
+app.post("/admin/prizes/:id/edit", requireAdmin, uploadImages.fields(imageFieldConfig), async (req, res) => {
   const current = await findPrizeById(req.params.id);
   if (!current) return res.status(404).send("Not found");
 
   const { title, description, category, tags, setName, priceYen, quantity } = req.body || {};
-  const mainFile = req.files?.image?.[0] || null;
-  const detailFile = req.files?.detailImage?.[0] || null;
-  const removeDetailImage = String(req.body?.removeDetailImage || "") === "1";
 
   if (!title) {
     return res.status(400).render("admin_prize_form", {
@@ -797,13 +823,13 @@ app.post("/admin/prizes/:id/edit", requireAdmin, uploadImages.fields([{ name: "i
     });
   }
 
+  const mainFile = req.files?.image?.[0] || null;
   let nextImagePath = current.imagePath;
   let nextImagePublicId = current.imagePublicId || "";
   if (mainFile) {
     if (USE_CLOUDINARY) {
       const uploaded = await uploadImageToCloudinary(mainFile, { publicIdPrefix: "main-" });
       nextImagePath = uploaded.url;
-      // delete old only if it was cloudinary-managed
       await deleteCloudinaryImage(nextImagePublicId);
       nextImagePublicId = uploaded.publicId;
     } else {
@@ -812,22 +838,33 @@ app.post("/admin/prizes/:id/edit", requireAdmin, uploadImages.fields([{ name: "i
     }
   }
 
-  let nextDetailImagePath = current.detailImagePath || "";
-  let nextDetailImagePublicId = current.detailImagePublicId || "";
-  if (detailFile) {
-    if (USE_CLOUDINARY) {
-      const uploaded = await uploadImageToCloudinary(detailFile, { publicIdPrefix: "detail-" });
-      await deleteCloudinaryImage(nextDetailImagePublicId);
-      nextDetailImagePath = uploaded.url;
-      nextDetailImagePublicId = uploaded.publicId;
-    } else {
-      nextDetailImagePath = `/uploads/${detailFile.filename}`;
-      nextDetailImagePublicId = "";
+  const existingDetails = Array.isArray(current.detailImages) ? current.detailImages : [];
+  const detailImages = [];
+
+  for (let i = 0; i < existingDetails.length; i++) {
+    const remove = String(req.body[`removeDetail_${i}`] || "") === "1";
+    if (remove) {
+      await deleteCloudinaryImage(existingDetails[i].publicId);
+      continue;
     }
-  } else if (removeDetailImage) {
-    await deleteCloudinaryImage(nextDetailImagePublicId);
-    nextDetailImagePath = "";
-    nextDetailImagePublicId = "";
+    detailImages.push({
+      path: existingDetails[i].path,
+      publicId: existingDetails[i].publicId || "",
+      caption: String(req.body[`existingCaption_${i}`] ?? existingDetails[i].caption ?? "").trim(),
+    });
+  }
+
+  for (let i = 0; i < DETAIL_IMAGE_MAX; i++) {
+    if (detailImages.length >= DETAIL_IMAGE_MAX) break;
+    const file = req.files?.[`detailImage_${i}`]?.[0];
+    if (!file) continue;
+    const caption = String(req.body[`newCaption_${i}`] || "").trim();
+    if (USE_CLOUDINARY) {
+      const uploaded = await uploadImageToCloudinary(file, { publicIdPrefix: "detail-" });
+      detailImages.push({ path: uploaded.url, publicId: uploaded.publicId, caption });
+    } else {
+      detailImages.push({ path: `/uploads/${file.filename}`, publicId: "", caption });
+    }
   }
 
   await updatePrizeById(req.params.id, {
@@ -843,8 +880,9 @@ app.post("/admin/prizes/:id/edit", requireAdmin, uploadImages.fields([{ name: "i
       .filter(Boolean),
     imagePath: nextImagePath,
     imagePublicId: nextImagePublicId,
-    detailImagePath: nextDetailImagePath,
-    detailImagePublicId: nextDetailImagePublicId,
+    detailImagePath: "",
+    detailImagePublicId: "",
+    detailImages,
     updatedAt: nowIso(),
   });
   res.redirect("/admin/prizes");
@@ -935,6 +973,7 @@ app.post("/admin/import", requireAdmin, uploadCsv.single("csv"), async (req, res
       imagePublicId: "",
       detailImagePath: "",
       detailImagePublicId: "",
+      detailImages: [],
       createdAt: nowIso(),
       updatedAt: nowIso(),
     })).filter((p) => p.title);

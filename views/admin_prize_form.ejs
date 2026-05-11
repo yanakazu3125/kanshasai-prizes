@@ -1,48 +1,83 @@
 <%
   const isEdit = mode === "edit";
   const pageTitle = isEdit ? "管理 - 景品編集" : "管理 - 景品追加";
-  const err = error ? `<div class="error">${error}</div>` : "";
   const p = prize || {};
 
   function esc(v) {
     return String(v || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
   }
 
+  const formAction  = isEdit ? `/admin/prizes/${p.id}/edit` : "/admin/prizes/new";
+  const formTitle   = isEdit ? "景品を編集" : "景品を追加";
+  const submitLabel = isEdit ? "更新" : "登録";
+  const confirmMsg  = isEdit ? "この内容で更新しますか？" : "この内容で登録しますか？";
+  const tagsValue   = esc(Array.isArray(p.tags) ? p.tags.join(", ") : "");
+  const errHtml     = error ? `<div class="error">${error}</div>` : "";
+
+  const existingDetails = Array.isArray(p.detailImages) ? p.detailImages : [];
+  const maxDetail = 10;
+
+  const currentImageHtml = p.imagePath
+    ? `<div class="meta">現在: <a href="${p.imagePath}" target="_blank" rel="noreferrer">${p.imagePath}</a></div>`
+    : "";
+
+  let existingDetailHtml = "";
+  existingDetails.forEach((d, i) => {
+    existingDetailHtml += `
+      <div class="detail-slot">
+        <div class="detail-slot-label">${i + 1}枚目</div>
+        <div class="detail-slot-header">
+          <img class="detail-thumb" src="${d.path}" alt=""
+               onerror="this.onerror=null;this.src='/static/placeholder.svg';" />
+          <label class="detail-remove">
+            <input type="checkbox" name="removeDetail_${i}" value="1" /> 削除
+          </label>
+        </div>
+        <textarea name="existingCaption_${i}" placeholder="説明文" rows="2">${esc(d.caption)}</textarea>
+      </div>`;
+  });
+
   const body = `
     <div class="panel">
       <div class="actions">
-        <a class="btn secondary" href="/admin/prizes">← 戻る</a>
+        <a class="btn secondary" href="/admin/prizes">\u2190 戻る</a>
         <form method="post" action="/admin/logout">
           <button class="btn secondary" type="submit">ログアウト</button>
         </form>
       </div>
     </div>
 
-    <div class="panel" style="max-width:760px;margin-left:auto;margin-right:auto;">
-      <div class="title" style="font-size:20px;margin-bottom:10px;">${isEdit ? "景品を編集" : "景品を追加"}</div>
-      <form method="post" enctype="multipart/form-data" action="${isEdit ? `/admin/prizes/${p.id}/edit` : "/admin/prizes/new"}">
+    <div class="panel form-panel">
+      <div class="form-heading">${formTitle}</div>
+
+      <form method="post" enctype="multipart/form-data"
+            action="${formAction}" onsubmit="return confirm('${confirmMsg}');">
+
         <div class="field">
           <label>タイトル（必須）</label>
           <input name="title" value="${esc(p.title)}" required />
         </div>
-        <div style="height:10px"></div>
+
+        <div class="form-gap"></div>
         <div class="field">
           <label>説明</label>
           <textarea name="description">${esc(p.description)}</textarea>
         </div>
-        <div style="height:10px"></div>
-        <div class="grid" style="grid-template-columns: repeat(2, 1fr);">
+
+        <div class="form-gap"></div>
+        <div class="two-col">
           <div class="field">
             <label>値段（円）</label>
-            <input name="priceYen" inputmode="numeric" value="${esc(p.priceYen ?? '')}" placeholder="例: 20000" />
+            <input name="priceYen" inputmode="numeric" value="${esc(p.priceYen ?? "")}" placeholder="例: 20000" />
           </div>
           <div class="field">
             <label>点数（個）</label>
-            <input name="quantity" inputmode="numeric" value="${esc(p.quantity ?? '')}" placeholder="例: 3" />
+            <input name="quantity" inputmode="numeric" value="${esc(p.quantity ?? "")}" placeholder="例: 3" />
           </div>
         </div>
-        <div style="height:10px"></div>
-        <div class="grid" style="grid-template-columns: repeat(2, 1fr);">
+
+        <div class="form-gap"></div>
+        <div class="two-col">
           <div class="field">
             <label>カテゴリ</label>
             <input name="category" value="${esc(p.category)}" placeholder="例: 食品" />
@@ -52,38 +87,64 @@
             <input name="setName" value="${esc(p.setName)}" placeholder="例: Aセット" />
           </div>
         </div>
-        <div style="height:10px"></div>
+
+        <div class="form-gap"></div>
         <div class="field">
           <label>タグ（カンマ区切り）</label>
-          <input name="tags" value="${esc(Array.isArray(p.tags) ? p.tags.join(', ') : '')}" placeholder="例: コーヒー, お菓子" />
+          <input name="tags" value="${tagsValue}" placeholder="例: コーヒー, お菓子" />
         </div>
-        <div style="height:10px"></div>
+
+        <div class="form-gap"></div>
         <div class="field">
           <label>画像（任意 / 上書き）</label>
           <input type="file" name="image" accept="image/*" />
-          ${p.imagePath ? `<div class="meta">現在: <a href="${p.imagePath}" target="_blank" rel="noreferrer">${p.imagePath}</a></div>` : ""}
+          ${currentImageHtml}
         </div>
-        <div style="height:10px"></div>
+
+        <div class="form-gap-lg"></div>
         <div class="field">
-          <label>詳細用の画像（任意 / 説明の下に表示）</label>
-          <input type="file" name="detailImage" accept="image/*" />
-          ${p.detailImagePath ? `<div class="meta">現在: <a href="${p.detailImagePath}" target="_blank" rel="noreferrer">${p.detailImagePath}</a></div>` : ""}
+          <label>詳細画像（最大${maxDetail}枚 / 各画像に説明文を設定可）</label>
+          ${existingDetailHtml}
+          <div id="newDetailSlots" data-max="${maxDetail}" data-existing="${existingDetails.length}"></div>
+          <button type="button" id="addDetailBtn" class="btn secondary add-detail-btn">＋ 画像を追加</button>
         </div>
-        ${isEdit && p.detailImagePath ? `
-          <div style="height:10px"></div>
-          <label style="display:flex; gap:10px; align-items:center; color: var(--muted); font-size: 13px;">
-            <input type="checkbox" name="removeDetailImage" value="1" />
-            詳細用の画像を削除する（更新で反映）
-          </label>
-        ` : ""}
-        ${err}
-        <div style="height:14px"></div>
+
+        ${errHtml}
+        <div class="form-gap-lg"></div>
         <div class="actions">
-          <button class="btn" type="submit">${isEdit ? "更新" : "登録"}</button>
+          <button class="btn" type="submit">${submitLabel}</button>
         </div>
       </form>
-    </div>
-  `;
+    </div>`;
 %>
 <%- include("_layout", { title: pageTitle, body }) %>
+<script>
+(function(){
+  var container = document.getElementById("newDetailSlots");
+  var btn = document.getElementById("addDetailBtn");
+  var max = parseInt(container.dataset.max, 10);
+  var existing = parseInt(container.dataset.existing, 10);
+  var counter = 0;
 
+  function updateBtn(){
+    btn.style.display = (existing + counter >= max) ? "none" : "";
+  }
+
+  function addSlot(){
+    if (existing + counter >= max) return;
+    var i = counter++;
+    var d = document.createElement("div");
+    d.className = "detail-slot";
+    d.innerHTML =
+      '<div class="detail-slot-label">' + (existing + i + 1) + '枚目（新規）</div>' +
+      '<input type="file" name="detailImage_' + i + '" accept="image/*" />' +
+      '<textarea name="newCaption_' + i + '" placeholder="説明文" rows="2"></textarea>';
+    container.appendChild(d);
+    updateBtn();
+  }
+
+  btn.onclick = addSlot;
+  addSlot();
+  updateBtn();
+})();
+</script>

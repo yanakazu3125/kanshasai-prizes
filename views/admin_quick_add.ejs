@@ -18,7 +18,7 @@
 
     <div class="panel" style="max-width:760px;margin-left:auto;margin-right:auto;">
       <div class="title" style="font-size:20px;margin-bottom:10px;">画像・名前・金額だけで追加</div>
-      <form method="post" enctype="multipart/form-data" action="/admin/quick-add">
+      <form method="post" enctype="multipart/form-data" action="/admin/quick-add" onsubmit="return confirm('この内容で追加しますか？');">
         <div class="field">
           <label>名前（必須）</label>
           <input name="title" value="${esc(form?.title)}" required />

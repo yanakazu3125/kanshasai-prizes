@@ -8,10 +8,22 @@
   const tags = (prize.tags || []).map((t) => `<span class="tag">${t}</span>`).join("");
   const price = prize.priceYen ? `¥${Number(prize.priceYen).toLocaleString('ja-JP')}` : "";
   const qty = prize.quantity ? `${prize.quantity}点` : "";
-  const detailImgSrc = prize.detailImagePath || "";
-  const detailImg = detailImgSrc
-    ? `<div style="height:12px"></div><img src="${detailImgSrc}" alt="" onerror="this.onerror=null;this.style.display='none';" style="width:100%;max-height:520px;object-fit:contain;border-radius:16px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.18)" />`
-    : "";
+
+  const details = Array.isArray(prize.detailImages) ? prize.detailImages : [];
+  let detailHtml = "";
+  if (details.length) {
+    detailHtml = details.map((d) => {
+      const captionHtml = d.caption
+        ? `<div class="detail-image-caption">${String(d.caption).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\n", "<br/>")}</div>`
+        : "";
+      return `<div class="detail-image-item">
+        <img src="${d.path}" alt="" onerror="this.onerror=null;this.style.display='none';"
+             style="width:100%;max-height:520px;object-fit:contain;border-radius:16px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.18)" />
+        ${captionHtml}
+      </div>`;
+    }).join("");
+  }
+
   const meta = [
     prize.category ? `カテゴリ: ${prize.category}` : null,
     prize.setName ? `セット: ${prize.setName}` : null,
@@ -21,7 +33,7 @@
   const body = `
     <div class="panel">
       <div class="actions">
-        <a class="btn secondary" href="/prizes">← 一覧へ</a>
+        <a class="btn secondary" href="/prizes">\u2190 一覧へ</a>
       </div>
       <div style="height:12px"></div>
       ${img}
@@ -31,7 +43,7 @@
       <div style="height:10px"></div>
       <div>${tags}</div>
       <div class="desc">${String(prize.description || "").replaceAll("\n", "<br/>")}</div>
-      ${detailImg}
+      ${detailHtml}
       <div style="height:16px"></div>
       <div class="panel" style="padding:14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);">
         <div style="font-weight:700;margin-bottom:8px;">景品お申し込みフォーム</div>
@@ -43,4 +55,3 @@
   `;
 %>
 <%- include("_layout", { title: pageTitle, body }) %>
-

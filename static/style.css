@@ -179,6 +179,18 @@ textarea { min-height: 120px; resize: vertical; }
   .pillBtn { font-size: 15px; padding: 13px 10px; }
 }
 
+/* Admin form layout */
+.form-panel { max-width: 760px; margin-left: auto; margin-right: auto; }
+.form-heading { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
+.form-gap { height: 10px; }
+.form-gap-lg { height: 16px; }
+.two-col { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.add-detail-btn { margin-top: 8px; font-size: 13px; }
+.detail-thumb {
+  width: 80px; height: 60px; object-fit: cover; border-radius: 8px;
+  flex-shrink: 0; border: 1px solid rgba(255,255,255,0.12);
+}
+
 .error {
   border: 1px solid rgba(255,107,107,0.55);
   background: rgba(255,107,107,0.12);
@@ -191,4 +203,45 @@ textarea { min-height: 120px; resize: vertical; }
 .table th, .table td { text-align:left; padding: 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .table th { color: var(--muted); font-weight: 600; font-size: 13px; }
 .tag { display:inline-block; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); margin-right:6px; color: var(--muted); font-size:12px; }
+
+/* Detail image slots (admin form) */
+.detail-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.detail-slot-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.detail-slot-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.detail-slot textarea {
+  min-height: auto;
+}
+.detail-remove {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+  flex-shrink: 0;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+/* Detail images (public detail page) */
+.detail-image-item { margin-top: 14px; }
+.detail-image-caption {
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.5;
+}
 
